@@ -44,7 +44,7 @@ export class EventOrganizerController {
     static async getByCustomerId(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
 
             if (isNaN(customerId)) {
                 res.status(400).json({
@@ -77,7 +77,7 @@ export class EventOrganizerController {
     static async getById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -128,7 +128,7 @@ export class EventOrganizerController {
     static async update(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const organizer: EventOrganizerUpdateDto = req.body;
 
             if (isNaN(id)) {
@@ -162,7 +162,7 @@ export class EventOrganizerController {
     static async updateVerificationStatus(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { status, verification_notes } = req.body;
             const verified_by = (req as any).userId; // From auth middleware
 
@@ -279,7 +279,7 @@ export class EventOrganizerController {
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const deleted_by = (req as any).userId;
 
             if (isNaN(id)) {
@@ -313,7 +313,7 @@ export class EventOrganizerController {
     static async restore(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -346,7 +346,7 @@ export class EventOrganizerController {
     static async delete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({

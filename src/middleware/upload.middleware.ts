@@ -14,7 +14,7 @@ const storage = multer.diskStorage({
         cb(null, uploadsDir);
     },
     filename: (req, file, cb) => {
-        const customerId = req.params.id;
+        const customerId = (req.params as { id: string }).id;
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const ext = path.extname(file.originalname);
         cb(null, `customer-${customerId}-${uniqueSuffix}${ext}`);

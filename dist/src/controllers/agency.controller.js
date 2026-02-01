@@ -33,14 +33,14 @@ class AgencyController {
         const updateData = {
             ...req.body,
             cities_served: req.body.cities_served?.split(',').map((city) => city.trim()),
-            logo: logoPath || req.body.logo // Garder l'ancien logo si pas de nouveau fichier
+            logo: logoPath || req.body.logo
         };
         const response = await agency_repository_1.AgencyRepository.update(parseInt(id), updateData);
         res.status(response.code).json(response);
     }
     static async softDeleteAgency(req, res) {
         const { id } = req.params;
-        const { deleted_by } = req.body; // ID de l'utilisateur qui supprime
+        const { deleted_by } = req.body;
         if (!deleted_by) {
             res.status(400).json({
                 status: false,

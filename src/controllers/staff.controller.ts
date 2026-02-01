@@ -26,7 +26,7 @@ export class StaffController {
     }
 
     static async getStaffById(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const { includeDeleted } = req.query;
         const response = await StaffRepository.findById(
             parseInt(id), 
@@ -44,7 +44,7 @@ export class StaffController {
     }
 
     static async updateStaff(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         
         try {
             // Convertir les dates si nécessaire
@@ -70,25 +70,25 @@ export class StaffController {
     }
 
     static async softDeleteStaff(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const response = await StaffRepository.softDelete(parseInt(id));
         res.status(response.code || 500).json(response);
     }
 
     static async deleteStaff(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const response = await StaffRepository.delete(parseInt(id));
         res.status(response.code || 500).json(response);
     }
 
     static async restoreStaff(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const response = await StaffRepository.restore(parseInt(id));
         res.status(response.code || 500).json(response);
     }
 
     static async updateSalaryPayment(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const { paymentDate } = req.body;
         
         try {

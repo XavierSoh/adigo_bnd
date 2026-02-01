@@ -226,7 +226,7 @@ export class AdminTransactionsController {
     static async getTransactionById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const transactionId = parseInt(req.params.id);
+            const transactionId = parseInt((req.params as { id: string }).id);
 
             const transaction = await pgpDb.oneOrNone(`
                 SELECT
@@ -276,7 +276,7 @@ export class AdminTransactionsController {
     static async processRefund(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const transactionId = parseInt(req.params.id);
+            const transactionId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
             const adminId = req.userId;
 

@@ -38,7 +38,7 @@ export class SeatController {
 
     static async getById(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({ status: false, message: "ID invalide", code: 400 });
@@ -54,7 +54,7 @@ export class SeatController {
 
     static async update(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({ status: false, message: "ID invalide", code: 400 });
@@ -81,7 +81,7 @@ export class SeatController {
 
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({ status: false, message: "ID invalide", code: 400 });
@@ -97,7 +97,7 @@ export class SeatController {
 
     static async restore(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({ status: false, message: "ID invalide", code: 400 });
@@ -113,7 +113,7 @@ export class SeatController {
 
     static async delete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({ status: false, message: "ID invalide", code: 400 });
@@ -129,7 +129,7 @@ export class SeatController {
 
     static async getByBus(req: Request, res: Response): Promise<void> {
         try {
-            const busId = parseInt(req.params.busId);
+            const busId = parseInt((req.params as { busId: string }).busId);
 
             if (isNaN(busId)) {
                 res.status(400).json({ status: false, message: "Bus ID invalide", code: 400 });

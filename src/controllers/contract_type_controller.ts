@@ -9,8 +9,8 @@ export class ContractTypeController {
   }
 
   static async findById(req: Request, res: Response): Promise<any> {
-    const { id } = req.params;
-    const { includeDeleted } = req.query;
+    const { id } = req.params as { id: string };
+    const { includeDeleted } = req.query as { includeDeleted?: string };
     const response = await ContractTypeRepository.findById(
       parseInt(id),
       includeDeleted === 'true'
@@ -25,25 +25,25 @@ export class ContractTypeController {
   }
 
   static async update(req: Request, res: Response): Promise<any> {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const response = await ContractTypeRepository.update(parseInt(id), req.body);
     return res.status(response.code || 500).json(response);
   }
 
   static async delete(req: Request, res: Response): Promise<any> {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const response = await ContractTypeRepository.delete(parseInt(id));
     return res.status(response.code || 500).json(response);
   }
 
   static async softDelete(req: Request, res: Response): Promise<any> {
-    const { id, user_id } = req.params;
+    const { id, user_id } = req.params as { id: string; user_id: string };
     const response = await ContractTypeRepository.softDelete(parseInt(id), parseInt(user_id));
     return res.status(response.code || 500).json(response);
   }
 
   static async restore(req: Request, res: Response): Promise<any> {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const response = await ContractTypeRepository.restore(parseInt(id));
     return res.status(response.code || 500).json(response);
   }

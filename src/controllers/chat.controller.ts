@@ -60,7 +60,7 @@ export class ChatController {
      */
     static async getConversationById(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             const conversation = await ChatRepository.getConversationById(id);
 
@@ -95,7 +95,7 @@ export class ChatController {
      */
     static async getConversationWithMessages(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             const conversation = await ChatRepository.getConversationWithMessages(id);
 
@@ -130,7 +130,7 @@ export class ChatController {
      */
     static async getConversationsByCustomer(req: Request, res: Response): Promise<void> {
         try {
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
             const status = req.query.status as any;
 
             const conversations = await ChatRepository.getConversationsByCustomer(
@@ -160,7 +160,7 @@ export class ChatController {
      */
     static async getConversationsByAdmin(req: Request, res: Response): Promise<void> {
         try {
-            const adminId = parseInt(req.params.adminId);
+            const adminId = parseInt((req.params as { adminId: string }).adminId);
             const status = req.query.status as any;
 
             const conversations = await ChatRepository.getConversationsByAdmin(
@@ -214,7 +214,7 @@ export class ChatController {
      */
     static async updateConversation(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const data: UpdateConversationDTO = req.body;
 
             const conversation = await ChatRepository.updateConversation(id, data);
@@ -250,7 +250,7 @@ export class ChatController {
      */
     static async assignConversation(req: Request, res: Response): Promise<void> {
         try {
-            const conversationId = parseInt(req.params.id);
+            const conversationId = parseInt((req.params as { id: string }).id);
             const { admin_id } = req.body;
 
             if (!admin_id) {
@@ -297,7 +297,7 @@ export class ChatController {
      */
     static async deleteConversation(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { deleted_by } = req.body;
 
             const success = await ChatRepository.deleteConversation(id, deleted_by || 1);
@@ -391,7 +391,7 @@ export class ChatController {
      */
     static async getMessagesByConversation(req: Request, res: Response): Promise<void> {
         try {
-            const conversationId = parseInt(req.params.id);
+            const conversationId = parseInt((req.params as { id: string }).id);
             const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
             const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
 
@@ -423,7 +423,7 @@ export class ChatController {
      */
     static async markMessageAsRead(req: Request, res: Response): Promise<void> {
         try {
-            const messageId = parseInt(req.params.id);
+            const messageId = parseInt((req.params as { id: string }).id);
 
             const success = await ChatRepository.markMessageAsRead(messageId);
 
@@ -457,7 +457,7 @@ export class ChatController {
      */
     static async markConversationAsRead(req: Request, res: Response): Promise<void> {
         try {
-            const conversationId = parseInt(req.params.id);
+            const conversationId = parseInt((req.params as { id: string }).id);
             const { for_user } = req.body; // 'customer' ou 'admin'
 
             if (!for_user || !['customer', 'admin'].includes(for_user)) {
@@ -495,7 +495,7 @@ export class ChatController {
      */
     static async deleteMessage(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             const success = await ChatRepository.deleteMessage(id);
 
@@ -529,7 +529,7 @@ export class ChatController {
      */
     static async getAISuggestion(req: Request, res: Response): Promise<void> {
         try {
-            const messageId = parseInt(req.params.id);
+            const messageId = parseInt((req.params as { id: string }).id);
 
             const aiResult = await ChatAIService.getAIResponse(messageId);
 

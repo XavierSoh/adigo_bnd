@@ -81,7 +81,7 @@ export class OrderService {
       await client.query('ROLLBACK');
       throw error;
     } finally {
-      client.release();
+      // Connection is managed by pg-promise
     }
   }
 

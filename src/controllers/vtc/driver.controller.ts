@@ -49,7 +49,7 @@ export class DriverController {
    */
   async updateLocation(req: Request, res: Response): Promise<Response> {
     try {
-      const driverId = parseInt(req.params.id);
+      const driverId = parseInt((req.params as { id: string }).id);
       const data: UpdateDriverLocationDto = req.body;
 
       const driver = await driverService.updateDriverLocation(driverId, data);
@@ -73,7 +73,7 @@ export class DriverController {
    */
   async updateStatus(req: Request, res: Response): Promise<Response> {
     try {
-      const driverId = parseInt(req.params.id);
+      const driverId = parseInt((req.params as { id: string }).id);
       const { status } = req.body;
 
       const driver = await driverService.updateDriverStatus(driverId, status);
@@ -97,7 +97,7 @@ export class DriverController {
    */
   async getDriver(req: Request, res: Response): Promise<Response> {
     try {
-      const driverId = parseInt(req.params.id);
+      const driverId = parseInt((req.params as { id: string }).id);
       const driver = await driverService.getDriverById(driverId);
 
       if (!driver) {

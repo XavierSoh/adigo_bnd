@@ -59,7 +59,7 @@ export class ShipmentController {
    */
   async getShipment(req: Request, res: Response): Promise<Response> {
     try {
-      const shipmentId = parseInt(req.params.id);
+      const shipmentId = parseInt((req.params as { id: string }).id);
       const shipment = await shipmentService.getShipmentById(shipmentId);
 
       if (!shipment) {
@@ -88,7 +88,7 @@ export class ShipmentController {
    */
   async trackShipment(req: Request, res: Response): Promise<Response> {
     try {
-      const trackingNumber = req.params.trackingNumber;
+      const trackingNumber = (req.params as { trackingNumber: string }).trackingNumber;
       const shipment = await shipmentService.trackByNumber(trackingNumber);
 
       if (!shipment) {

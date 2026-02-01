@@ -47,7 +47,7 @@ export class UserController {
 
     static async updateUser(req: Request, res: Response) {
         const lang = req.lang || 'en';
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
 
         if (!id || isNaN(parseInt(id))) {
             res.status(400).json({
@@ -69,7 +69,7 @@ export class UserController {
 
     static async softDeleteUser(req: Request, res: Response) {
         const lang = req.lang || 'en';
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
 
         if (!id || isNaN(parseInt(id))) {
             res.status(400).json({
@@ -91,7 +91,7 @@ export class UserController {
 
     static async deleteUser(req: Request, res: Response) {
         const lang = req.lang || 'en';
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
 
         if (!id || isNaN(parseInt(id))) {
             res.status(400).json({
@@ -113,7 +113,7 @@ export class UserController {
 
     static async restoreUser(req: Request, res: Response) {
         const lang = req.lang || 'en';
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
 
         if (!id || isNaN(parseInt(id))) {
             res.status(400).json({
@@ -135,7 +135,7 @@ export class UserController {
 
     static async getUserById(req: Request, res: Response) {
         const lang = req.lang || 'en';
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
 
         if (!id || isNaN(parseInt(id))) {
             res.status(400).json({

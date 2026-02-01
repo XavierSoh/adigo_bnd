@@ -73,7 +73,7 @@ export class RideController {
    */
   async getRide(req: Request, res: Response): Promise<Response> {
     try {
-      const rideId = parseInt(req.params.id);
+      const rideId = parseInt((req.params as { id: string }).id);
       const ride = await rideService.getRideById(rideId);
 
       if (!ride) {
@@ -132,7 +132,7 @@ export class RideController {
    */
   async cancelRide(req: Request, res: Response): Promise<Response> {
     try {
-      const rideId = parseInt(req.params.id);
+      const rideId = parseInt((req.params as { id: string }).id);
       const data: CancelRideDto = req.body;
 
       const ride = await rideService.cancelRide(rideId, data);
@@ -156,7 +156,7 @@ export class RideController {
    */
   async rateRide(req: Request, res: Response): Promise<Response> {
     try {
-      const rideId = parseInt(req.params.id);
+      const rideId = parseInt((req.params as { id: string }).id);
       const { ratedBy, ...data } = req.body;
 
       const ride = await rideService.rateRide(rideId, ratedBy, data as RateRideDto);

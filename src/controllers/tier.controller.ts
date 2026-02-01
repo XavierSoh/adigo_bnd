@@ -29,7 +29,7 @@ export class TierController {
      */
     static async getCustomerTierProgress(req: Request, res: Response): Promise<void> {
         try {
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
 
             if (isNaN(customerId)) {
                 res.status(400).json({
@@ -80,7 +80,7 @@ export class TierController {
      */
     static async recalculateCustomerTier(req: Request, res: Response): Promise<void> {
         try {
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
 
             if (isNaN(customerId)) {
                 res.status(400).json({

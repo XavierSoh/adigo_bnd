@@ -93,7 +93,7 @@ export class GeneratedTripController {
     // Get by ID
     static async getById(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -147,7 +147,7 @@ export class GeneratedTripController {
     // Update
     static async update(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const generatedTrip: Partial<GeneratedTripModel> = req.body;
 
             if (isNaN(id)) {
@@ -173,7 +173,7 @@ export class GeneratedTripController {
     // Delete
     static async delete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -226,7 +226,7 @@ export class GeneratedTripController {
     // Update status
     static async updateStatus(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { status } = req.body;
 
             if (isNaN(id)) {
@@ -271,7 +271,7 @@ export class GeneratedTripController {
     // Assign staff
     static async assignStaff(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { driver_id, conductor_id } = req.body;
 
             if (isNaN(id)) {
@@ -315,7 +315,7 @@ export class GeneratedTripController {
     // Update available seats
     static async updateAvailableSeats(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { available_seats } = req.body;
 
             if (isNaN(id)) {

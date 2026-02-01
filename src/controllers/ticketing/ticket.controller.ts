@@ -4,19 +4,19 @@ import { TicketRepository } from "../../repository/ticketing";
 export class TicketController {
 
     static async getMyTickets(req: Request, res: Response) {
-        const customerId = parseInt(req.params.customerId);
+        const customerId = parseInt((req.params as { customerId: string }).customerId);
         const result = await TicketRepository.findByCustomerId(customerId);
         res.status(result.code).json(result);
     }
 
     static async getById(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await TicketRepository.findById(id);
         res.status(result.code).json(result);
     }
 
     static async getByReference(req: Request, res: Response) {
-        const reference = req.params.reference;
+        const reference = (req.params as { reference: string }).reference;
         const result = await TicketRepository.findByReference(reference);
         res.status(result.code).json(result);
     }
@@ -27,13 +27,13 @@ export class TicketController {
     }
 
     static async confirmPayment(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await TicketRepository.confirmPayment(id, req.body);
         res.status(result.code).json(result);
     }
 
     static async validate(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await TicketRepository.validate(id);
         res.status(result.code).json(result);
     }
@@ -49,7 +49,7 @@ export class TicketController {
     }
 
     static async cancel(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await TicketRepository.cancel(id);
         res.status(result.code).json(result);
     }

@@ -119,7 +119,7 @@ export class AdminPromoController {
     static async updatePromoCode(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const promoId = parseInt(req.params.id);
+            const promoId = parseInt((req.params as { id: string }).id);
             const { discount_type, discount_value, max_uses, valid_from, valid_until, min_purchase_amount, is_active } = req.body;
 
             const updatedPromo = await pgpDb.one(`
@@ -161,7 +161,7 @@ export class AdminPromoController {
     static async deletePromoCode(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const promoId = parseInt(req.params.id);
+            const promoId = parseInt((req.params as { id: string }).id);
             const adminId = req.userId;
 
             const deletedPromo = await pgpDb.one(`

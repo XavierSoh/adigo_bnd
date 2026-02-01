@@ -10,7 +10,7 @@ export class CategoryController {
     }
 
     static async getById(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await CategoryRepository.findById(id);
         res.status(result.code).json(result);
     }
@@ -21,13 +21,13 @@ export class CategoryController {
     }
 
     static async update(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await CategoryRepository.update(id, req.body);
         res.status(result.code).json(result);
     }
 
     static async delete(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await CategoryRepository.delete(id);
         res.status(result.code).json(result);
     }

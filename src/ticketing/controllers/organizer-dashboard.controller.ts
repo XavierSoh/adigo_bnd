@@ -17,7 +17,7 @@ export class OrganizerDashboardController {
     static async getStats(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const organizerId = parseInt(req.params.id);
+            const organizerId = parseInt((req.params as { id: string }).id);
 
             // Overall stats
             const stats = await pgpDb.one(`
@@ -92,7 +92,7 @@ export class OrganizerDashboardController {
     static async getSales(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const organizerId = parseInt(req.params.id);
+            const organizerId = parseInt((req.params as { id: string }).id);
 
             const sales = await pgpDb.any(`
                 SELECT
@@ -146,7 +146,7 @@ export class OrganizerDashboardController {
     static async getValidatedTickets(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const organizerId = parseInt(req.params.id);
+            const organizerId = parseInt((req.params as { id: string }).id);
             const eventId = req.query.event_id ? parseInt(req.query.event_id as string) : null;
 
             let query = `
@@ -205,7 +205,7 @@ export class OrganizerDashboardController {
     static async getRevenue(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const organizerId = parseInt(req.params.id);
+            const organizerId = parseInt((req.params as { id: string }).id);
 
             // Revenue by event
             const revenueByEvent = await pgpDb.any(`

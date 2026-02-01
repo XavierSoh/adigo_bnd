@@ -44,7 +44,7 @@ export class RestaurantController {
    */
   async getRestaurant(req: Request, res: Response): Promise<Response> {
     try {
-      const restaurantId = parseInt(req.params.id);
+      const restaurantId = parseInt((req.params as { id: string }).id);
       const restaurant = await restaurantService.getRestaurantById(restaurantId);
 
       if (!restaurant) {
@@ -73,7 +73,7 @@ export class RestaurantController {
    */
   async getRestaurantMenu(req: Request, res: Response): Promise<Response> {
     try {
-      const restaurantId = parseInt(req.params.id);
+      const restaurantId = parseInt((req.params as { id: string }).id);
       const category = req.query.category as string;
 
       let query = 'SELECT * FROM menu_items WHERE restaurant_id = $1 AND is_available = true';

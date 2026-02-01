@@ -148,7 +148,7 @@ export class AdminReviewsController {
     static async flagReview(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const reviewId = parseInt(req.params.id);
+            const reviewId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
             const adminId = req.userId;
 
@@ -183,7 +183,7 @@ export class AdminReviewsController {
     static async unflagReview(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const reviewId = parseInt(req.params.id);
+            const reviewId = parseInt((req.params as { id: string }).id);
 
             const updatedReview = await pgpDb.one(`
                 UPDATE event_review
@@ -216,7 +216,7 @@ export class AdminReviewsController {
     static async deleteReview(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const reviewId = parseInt(req.params.id);
+            const reviewId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
             const adminId = req.userId;
 

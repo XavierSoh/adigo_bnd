@@ -9,13 +9,13 @@ export class OrganizerController {
     }
 
     static async getById(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await OrganizerRepository.findById(id);
         res.status(result.code).json(result);
     }
 
     static async getByCustomerId(req: Request, res: Response) {
-        const customerId = parseInt(req.params.customerId);
+        const customerId = parseInt((req.params as { customerId: string }).customerId);
         const result = await OrganizerRepository.findByCustomerId(customerId);
         res.status(result.code).json(result);
     }
@@ -26,20 +26,20 @@ export class OrganizerController {
     }
 
     static async update(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await OrganizerRepository.update(id, req.body);
         res.status(result.code).json(result);
     }
 
     static async verify(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const verifiedBy = req.body.verified_by || 1; // TODO: get from auth
         const result = await OrganizerRepository.verify(id, verifiedBy);
         res.status(result.code).json(result);
     }
 
     static async delete(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await OrganizerRepository.delete(id);
         res.status(result.code).json(result);
     }

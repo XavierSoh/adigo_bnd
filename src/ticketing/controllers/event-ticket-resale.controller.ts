@@ -60,7 +60,7 @@ export class EventTicketResaleController {
     static async getById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -93,7 +93,7 @@ export class EventTicketResaleController {
     static async getByResaleCode(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const { resaleCode } = req.params;
+            const { resaleCode } = req.params as { resaleCode: string };
 
             const result = await EventTicketResaleRepository.findByResaleCode(resaleCode);
 
@@ -178,7 +178,7 @@ export class EventTicketResaleController {
     static async getActiveByEvent(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.eventId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             if (isNaN(eventId)) {
                 res.status(400).json({
@@ -244,7 +244,7 @@ export class EventTicketResaleController {
     static async update(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const data: EventTicketResaleUpdateDto = req.body;
 
             if (isNaN(id)) {
@@ -288,7 +288,7 @@ export class EventTicketResaleController {
     static async cancel(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { cancellation_reason } = req.body;
             const seller_id = (req as any).userId;
 
@@ -346,7 +346,7 @@ export class EventTicketResaleController {
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const deleted_by = (req as any).userId;
 
             if (isNaN(id)) {

@@ -116,7 +116,7 @@ export class AdminLogsController {
     static async getAuditTrail(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const { entityType, entityId } = req.params;
+            const { entityType, entityId } = req.params as { entityType: string; entityId: string };
 
             const logs = await pgpDb.any(`
                 SELECT

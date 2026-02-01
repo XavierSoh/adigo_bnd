@@ -9,7 +9,7 @@ export class GeneratedTripSeatController {
     // Get seat by ID
     static async getById(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -34,7 +34,7 @@ export class GeneratedTripSeatController {
     // Get all seats for a generated trip
     static async getByGeneratedTrip(req: Request, res: Response): Promise<void> {
         try {
-            const generatedTripId = parseInt(req.params.generated_trip_id);
+            const generatedTripId = parseInt((req.params as { generated_trip_id: string }).generated_trip_id);
 
             if (isNaN(generatedTripId)) {
                 res.status(400).json({
@@ -59,8 +59,8 @@ export class GeneratedTripSeatController {
     // Get seats by status (available, reserved, booked, blocked)
     static async getByStatus(req: Request, res: Response): Promise<void> {
         try {
-            const generatedTripId = parseInt(req.params.generated_trip_id);
-            const { status } = req.query;
+            const generatedTripId = parseInt((req.params as { generated_trip_id: string }).generated_trip_id);
+            const { status } = req.query as { status?: string };
 
             if (isNaN(generatedTripId)) {
                 res.status(400).json({
@@ -104,7 +104,7 @@ export class GeneratedTripSeatController {
     // Count available seats for a generated trip
     static async countAvailable(req: Request, res: Response): Promise<void> {
         try {
-            const generatedTripId = parseInt(req.params.generated_trip_id);
+            const generatedTripId = parseInt((req.params as { generated_trip_id: string }).generated_trip_id);
 
             if (isNaN(generatedTripId)) {
                 res.status(400).json({
@@ -129,7 +129,7 @@ export class GeneratedTripSeatController {
     // Get seats with seat details (join with seat table)
     static async getWithDetails(req: Request, res: Response): Promise<void> {
         try {
-            const generatedTripId = parseInt(req.params.generated_trip_id);
+            const generatedTripId = parseInt((req.params as { generated_trip_id: string }).generated_trip_id);
 
             if (isNaN(generatedTripId)) {
                 res.status(400).json({

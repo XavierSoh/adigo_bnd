@@ -66,7 +66,7 @@ export class AddressController {
    */
   async updateAddress(req: Request, res: Response): Promise<Response> {
     try {
-      const addressId = parseInt(req.params.id);
+      const addressId = parseInt((req.params as { id: string }).id);
       const data: UpdateAddressDto = req.body;
 
       const address = await addressService.updateAddress(addressId, data);
@@ -90,7 +90,7 @@ export class AddressController {
    */
   async deleteAddress(req: Request, res: Response): Promise<Response> {
     try {
-      const addressId = parseInt(req.params.id);
+      const addressId = parseInt((req.params as { id: string }).id);
       await addressService.deleteAddress(addressId);
 
       return res.json({

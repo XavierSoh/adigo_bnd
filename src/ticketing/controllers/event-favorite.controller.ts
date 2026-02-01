@@ -43,8 +43,8 @@ export class EventFavoriteController {
     static async remove(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
-            const eventId = parseInt(req.params.eventId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             if (isNaN(customerId) || isNaN(eventId)) {
                 res.status(400).json({
@@ -114,7 +114,7 @@ export class EventFavoriteController {
     static async getByCustomer(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
 
             if (isNaN(customerId)) {
                 res.status(400).json({
@@ -147,7 +147,7 @@ export class EventFavoriteController {
     static async getByEvent(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.eventId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             if (isNaN(eventId)) {
                 res.status(400).json({
@@ -180,8 +180,8 @@ export class EventFavoriteController {
     static async isFavorited(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
-            const eventId = parseInt(req.params.eventId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             if (isNaN(customerId) || isNaN(eventId)) {
                 res.status(400).json({
@@ -210,7 +210,7 @@ export class EventFavoriteController {
     static async getCountByEvent(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.eventId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             if (isNaN(eventId)) {
                 res.status(400).json({
@@ -309,7 +309,7 @@ export class EventFavoriteController {
     static async removeAllByCustomer(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
 
             if (isNaN(customerId)) {
                 res.status(400).json({
@@ -342,7 +342,7 @@ export class EventFavoriteController {
     static async removeAllByEvent(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.eventId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             if (isNaN(eventId)) {
                 res.status(400).json({

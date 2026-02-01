@@ -8,7 +8,7 @@ export class WalletController {
     static async getBalance(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
 
             if (isNaN(customerId)) {
                 res.status(400).json({
@@ -35,7 +35,7 @@ export class WalletController {
     static async topUp(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
             const topUpData: TopUpRequest = req.body;
 
             if (isNaN(customerId)) {
@@ -87,7 +87,7 @@ export class WalletController {
     static async getTransactions(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const customerId = parseInt(req.params.customerId);
+            const customerId = parseInt((req.params as { customerId: string }).customerId);
             const limit = parseInt(req.query.limit as string) || 50;
             const offset = parseInt(req.query.offset as string) || 0;
 

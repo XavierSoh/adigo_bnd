@@ -61,7 +61,7 @@ export class AdminSettingsController {
     static async updateSetting(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const settingKey = req.params.key;
+            const settingKey = (req.params as { key: string }).key;
             const { value } = req.body;
             const adminId = req.userId;
 

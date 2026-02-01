@@ -43,7 +43,7 @@ export class EventCategoryController {
     static async getById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -98,7 +98,7 @@ export class EventCategoryController {
     static async update(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const category: EventCategoryUpdateDto = req.body;
 
             if (isNaN(id)) {
@@ -181,7 +181,7 @@ export class EventCategoryController {
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { deleted_by } = req.body;
 
             if (isNaN(id)) {
@@ -215,7 +215,7 @@ export class EventCategoryController {
     static async restore(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -248,7 +248,7 @@ export class EventCategoryController {
     static async delete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({

@@ -75,7 +75,7 @@ export class CustomerController {
     static async getById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             console.log(`🔍 [CustomerController] getById called with ID: ${id}`);
 
@@ -128,7 +128,7 @@ export class CustomerController {
     // Update customer
     static async update(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const customer: Partial<Customer> = req.body;
 
             console.log('📝 [CustomerController] Updating customer ID:', id);
@@ -159,7 +159,7 @@ export class CustomerController {
     // Soft delete
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { deleted_by } = req.body;
 
             if (isNaN(id)) {
@@ -185,7 +185,7 @@ export class CustomerController {
     // Restore
     static async restore(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -210,7 +210,7 @@ export class CustomerController {
     // Hard delete
     static async delete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -325,7 +325,7 @@ export class CustomerController {
     // Update loyalty points
     static async updateLoyaltyPoints(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { points } = req.body;
 
             if (isNaN(id) || points === undefined) {
@@ -351,7 +351,7 @@ export class CustomerController {
     // Verify email
     static async verifyEmail(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -376,7 +376,7 @@ export class CustomerController {
     // Verify phone
     static async verifyPhone(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -677,7 +677,7 @@ export class CustomerController {
     static async updateProfilePicture(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -720,7 +720,7 @@ export class CustomerController {
     static async updateFcmToken(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { fcm_token } = req.body;
 
             if (isNaN(id)) {
@@ -770,7 +770,7 @@ export class CustomerController {
     static async removeFcmToken(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -809,7 +809,7 @@ export class CustomerController {
     static async getCustomerBookings(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             console.log(`📖 [CustomerController] Getting bookings for customer ID: ${id}`);
 

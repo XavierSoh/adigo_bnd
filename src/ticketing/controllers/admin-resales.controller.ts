@@ -138,7 +138,7 @@ export class AdminResalesController {
     static async approveResale(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const resaleId = parseInt(req.params.id);
+            const resaleId = parseInt((req.params as { id: string }).id);
             const adminId = req.userId;
 
             const updatedResale = await pgpDb.one(`
@@ -172,7 +172,7 @@ export class AdminResalesController {
     static async rejectResale(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const resaleId = parseInt(req.params.id);
+            const resaleId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
             const adminId = req.userId;
 
@@ -216,7 +216,7 @@ export class AdminResalesController {
     static async deleteResale(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const resaleId = parseInt(req.params.id);
+            const resaleId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
             const adminId = req.userId;
 

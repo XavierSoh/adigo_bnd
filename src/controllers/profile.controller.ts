@@ -62,7 +62,7 @@ export default class ProfileController{
     
     
     static async deleteProfile(req: Request, res: Response): Promise<any> {
-        const profileId = req.params.id;
+        const profileId = (req.params as { id: string }).id;
         try {
             const response = await ProfileRepository.deleteProfile(parseInt(profileId));
             return res.status(response.code).json(response);
@@ -79,8 +79,8 @@ export default class ProfileController{
     }
 
     static async softDeleteProfile(req: Request, res: Response): Promise<any> {
-        const {profileId, userId} = req.params;
-        
+        const {profileId, userId} = req.params as { profileId: string; userId: string };
+
         try {
             const response = await ProfileRepository.softDeleteProfile(parseInt(profileId), parseInt(userId));
             return res.status(response.code).json(response);
@@ -97,7 +97,7 @@ export default class ProfileController{
     }
 
     static async restoreProfile(req: Request, res: Response): Promise<any> {
-    const { profileId, userId } = req.params;
+    const { profileId, userId } = req.params as { profileId: string; userId: string };
 
     try {
         const response = await ProfileRepository.restoreProfile(parseInt(profileId), parseInt(userId));

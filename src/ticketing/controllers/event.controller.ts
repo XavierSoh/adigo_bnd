@@ -49,7 +49,7 @@ export class EventController {
     static async getById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -82,7 +82,7 @@ export class EventController {
     static async getByEventCode(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const { eventCode } = req.params;
+            const { eventCode } = req.params as { eventCode: string };
 
             const result = await EventRepository.findByEventCode(eventCode);
 
@@ -124,7 +124,7 @@ export class EventController {
     static async getByOrganizer(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const organizerId = parseInt(req.params.organizerId);
+            const organizerId = parseInt((req.params as { organizerId: string }).organizerId);
 
             if (isNaN(organizerId)) {
                 res.status(400).json({
@@ -152,7 +152,7 @@ export class EventController {
     static async getByCategory(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const categoryId = parseInt(req.params.categoryId);
+            const categoryId = parseInt((req.params as { categoryId: string }).categoryId);
 
             if (isNaN(categoryId)) {
                 res.status(400).json({
@@ -180,7 +180,7 @@ export class EventController {
     static async update(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const event: EventUpdateDto = req.body;
 
             if (isNaN(id)) {
@@ -214,7 +214,7 @@ export class EventController {
     static async publish(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const premiumServicesData = req.body;
             const organizerId = (req as any).userId;
 
@@ -372,7 +372,7 @@ export class EventController {
     static async approve(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { validation_notes } = req.body;
             const validated_by = (req as any).userId;
 
@@ -407,7 +407,7 @@ export class EventController {
     static async reject(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { validation_notes } = req.body;
             const validated_by = (req as any).userId;
 
@@ -451,7 +451,7 @@ export class EventController {
     static async cancel(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { cancellation_reason } = req.body;
 
             if (isNaN(id)) {
@@ -685,7 +685,7 @@ export class EventController {
     static async getEventWithTickets(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -728,7 +728,7 @@ export class EventController {
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const deleted_by = (req as any).userId;
 
             if (isNaN(id)) {
@@ -762,7 +762,7 @@ export class EventController {
     static async restore(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -795,7 +795,7 @@ export class EventController {
     static async delete(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({

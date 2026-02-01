@@ -67,7 +67,7 @@ export class EventValidationController {
     static async approveEvent(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.id);
+            const eventId = parseInt((req.params as { id: string }).id);
             const adminId = (req as any).userId;
 
             const result = await pgpDb.one(`
@@ -106,7 +106,7 @@ export class EventValidationController {
     static async rejectEvent(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.id);
+            const eventId = parseInt((req.params as { id: string }).id);
             const adminId = (req as any).userId;
             const { reason } = req.body;
 
@@ -197,7 +197,7 @@ export class EventValidationController {
     static async verifyOrganizer(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const organizerId = parseInt(req.params.id);
+            const organizerId = parseInt((req.params as { id: string }).id);
             const adminId = (req as any).userId;
             const { status, reason } = req.body;
 

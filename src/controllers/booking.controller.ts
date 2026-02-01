@@ -283,7 +283,7 @@ export class BookingController {
     // Get booking by ID
     static async getById(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             
             if (isNaN(id)) {
                 res.status(400).json({
@@ -360,7 +360,7 @@ export class BookingController {
     // Update booking
     static async update(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const booking: Partial<Booking> = req.body;
 
             if (isNaN(id)) {
@@ -404,7 +404,7 @@ export class BookingController {
     // Soft delete booking
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const { deleted_by } = req.body;
 
             if (isNaN(id)) {
@@ -430,7 +430,7 @@ export class BookingController {
     // Restore booking
     static async restore(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -455,7 +455,7 @@ export class BookingController {
     // Hard delete booking
     static async delete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
 
             if (isNaN(id)) {
                 res.status(400).json({
@@ -786,7 +786,7 @@ export class BookingController {
      */
     static async cancelSingle(req: Request, res: Response): Promise<void> {
         try {
-            const { booking_id } = req.params;
+            const { booking_id } = req.params as { booking_id: string };
             const { cancellation_reason, customer_id } = req.body;
 
             console.log(`🚫 [BookingController] Cancel booking ${booking_id} for customer ${customer_id}`);
@@ -876,7 +876,7 @@ export class BookingController {
      */
     static async modifySingle(req: Request, res: Response): Promise<void> {
         try {
-            const { booking_id } = req.params;
+            const { booking_id } = req.params as { booking_id: string };
             const { customer_id, new_seat_id } = req.body;
 
             console.log(`✏️ [BookingController] Modify booking ${booking_id} for customer ${customer_id}, new seat: ${new_seat_id}`);

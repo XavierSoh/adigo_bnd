@@ -166,7 +166,7 @@ export class AdminUsersController {
     static async getUserById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const userId = parseInt(req.params.id);
+            const userId = parseInt((req.params as { id: string }).id);
 
             const user = await pgpDb.oneOrNone(`
                 SELECT
@@ -215,7 +215,7 @@ export class AdminUsersController {
     static async updateUserStatus(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const userId = parseInt(req.params.id);
+            const userId = parseInt((req.params as { id: string }).id);
             const { is_active, reason } = req.body;
 
             if (is_active === undefined) {
@@ -260,7 +260,7 @@ export class AdminUsersController {
     static async getUserTransactions(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const userId = parseInt(req.params.id);
+            const userId = parseInt((req.params as { id: string }).id);
 
             const transactions = await pgpDb.any(`
                 SELECT
@@ -298,7 +298,7 @@ export class AdminUsersController {
     static async getUserTickets(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const userId = parseInt(req.params.id);
+            const userId = parseInt((req.params as { id: string }).id);
 
             const tickets = await pgpDb.any(`
                 SELECT
@@ -345,7 +345,7 @@ export class AdminUsersController {
     static async getUserWallet(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const userId = parseInt(req.params.id);
+            const userId = parseInt((req.params as { id: string }).id);
 
             const wallet = await pgpDb.oneOrNone(`
                 SELECT

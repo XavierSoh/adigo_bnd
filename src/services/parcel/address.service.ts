@@ -47,7 +47,7 @@ export class AddressService {
       `;
 
       const values = [
-        data.customerId, data.label, data.name, data.phone, data.address,
+        data.customerId, data.label, data.fullName, data.phoneNumber, data.address,
         data.street, data.city, data.building, data.landmark,
         data.latitude, data.longitude, data.isDefault || false
       ];
@@ -61,7 +61,7 @@ export class AddressService {
       await client.query('ROLLBACK');
       throw error;
     } finally {
-      client.release();
+      // Connection is managed by pg-promise
     }
   }
 
@@ -120,7 +120,7 @@ export class AddressService {
       await client.query('ROLLBACK');
       throw error;
     } finally {
-      client.release();
+      // Connection is managed by pg-promise
     }
   }
 

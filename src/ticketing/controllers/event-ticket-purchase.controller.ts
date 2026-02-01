@@ -197,7 +197,7 @@ export class EventTicketPurchaseController {
     static async getById(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const ticketId = parseInt(req.params.id);
+            const ticketId = parseInt((req.params as { id: string }).id);
 
             const result = await EventTicketPurchaseRepository.findById(ticketId);
 
@@ -284,7 +284,7 @@ export class EventTicketPurchaseController {
     static async getEventTickets(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const eventId = parseInt(req.params.eventId);
+            const eventId = parseInt((req.params as { eventId: string }).eventId);
 
             const result = await EventTicketPurchaseRepository.findByEvent(eventId);
 
@@ -307,7 +307,7 @@ export class EventTicketPurchaseController {
     static async cancelTicket(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const ticketId = parseInt(req.params.id);
+            const ticketId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
 
             if (!reason) {

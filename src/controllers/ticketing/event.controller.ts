@@ -12,14 +12,14 @@ export class EventController {
     }
 
     static async getById(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         await EventRepository.incrementViews(id);
         const result = await EventRepository.findById(id);
         res.status(result.code).json(result);
     }
 
     static async getByCode(req: Request, res: Response) {
-        const code = req.params.code;
+        const code = (req.params as { code: string }).code;
         const result = await EventRepository.findByCode(code);
         res.status(result.code).json(result);
     }
@@ -45,56 +45,56 @@ export class EventController {
     }
 
     static async update(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await EventRepository.update(id, req.body);
         res.status(result.code).json(result);
     }
 
     static async publish(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await EventRepository.updateStatus(id, 'pending');
         res.status(result.code).json(result);
     }
 
     static async approve(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await EventRepository.updateStatus(id, 'published');
         res.status(result.code).json(result);
     }
 
     static async cancel(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await EventRepository.updateStatus(id, 'cancelled');
         res.status(result.code).json(result);
     }
 
     static async delete(req: Request, res: Response) {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const result = await EventRepository.delete(id);
         res.status(result.code).json(result);
     }
 
     // Ticket Types for event
     static async getTicketTypes(req: Request, res: Response) {
-        const eventId = parseInt(req.params.id);
+        const eventId = parseInt((req.params as { id: string }).id);
         const result = await TicketTypeRepository.findByEventId(eventId);
         res.status(result.code).json(result);
     }
 
     static async createTicketType(req: Request, res: Response) {
-        const eventId = parseInt(req.params.id);
+        const eventId = parseInt((req.params as { id: string }).id);
         const result = await TicketTypeRepository.create({ ...req.body, event_id: eventId });
         res.status(result.code).json(result);
     }
 
     static async updateTicketType(req: Request, res: Response) {
-        const typeId = parseInt(req.params.typeId);
+        const typeId = parseInt((req.params as { typeId: string }).typeId);
         const result = await TicketTypeRepository.update(typeId, req.body);
         res.status(result.code).json(result);
     }
 
     static async deleteTicketType(req: Request, res: Response) {
-        const typeId = parseInt(req.params.typeId);
+        const typeId = parseInt((req.params as { typeId: string }).typeId);
         const result = await TicketTypeRepository.delete(typeId);
         res.status(result.code).json(result);
     }

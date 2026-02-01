@@ -36,7 +36,7 @@ export class OrderController {
    */
   async getOrder(req: Request, res: Response): Promise<Response> {
     try {
-      const orderId = parseInt(req.params.id);
+      const orderId = parseInt((req.params as { id: string }).id);
       const order = await orderService.getOrderById(orderId);
 
       if (!order) {
@@ -95,7 +95,7 @@ export class OrderController {
    */
   async cancelOrder(req: Request, res: Response): Promise<Response> {
     try {
-      const orderId = parseInt(req.params.id);
+      const orderId = parseInt((req.params as { id: string }).id);
       const order = await orderService.cancelOrder(orderId);
 
       return res.json({
@@ -117,7 +117,7 @@ export class OrderController {
    */
   async rateOrder(req: Request, res: Response): Promise<Response> {
     try {
-      const orderId = parseInt(req.params.id);
+      const orderId = parseInt((req.params as { id: string }).id);
       const data: RateOrderDto = req.body;
 
       const order = await orderService.rateOrder(orderId, data);

@@ -20,7 +20,7 @@ export class BusController {
     }
 
     static async getBusById(req: Request, res: Response): Promise<any> {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         if (isNaN(id)) {
             return res.status(400).json({ status: false, message: "ID invalide", code: 400 });
         }
@@ -30,7 +30,7 @@ export class BusController {
     }
 
     static async updateBus(req: Request, res: Response):Promise<any> {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         if (isNaN(id)) {
             return res.status(400).json({ status: false, message: "ID invalide", code: 400 });
         }
@@ -40,7 +40,7 @@ export class BusController {
     }
 
     static async softDeleteBus(req: Request, res: Response):Promise<any> {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
         const deleted_by = req.body.deleted_by;
 
         if (isNaN(id) || !deleted_by) {
@@ -51,8 +51,8 @@ export class BusController {
         res.status(response.code).json(response);
     }
 
-    static async restoreBus(req: Request, res: Response):Promise<any>    {
-        const id = parseInt(req.params.id);
+    static async restoreBus(req: Request, res: Response):Promise<any> {
+        const id = parseInt((req.params as { id: string }).id);
 
         if (isNaN(id)) {
             return res.status(400).json({ status: false, message: "ID invalide", code: 400 });
@@ -63,7 +63,7 @@ export class BusController {
     }
 
     static async deleteBus(req: Request, res: Response):Promise<any> {
-        const id = parseInt(req.params.id);
+        const id = parseInt((req.params as { id: string }).id);
 
         if (isNaN(id)) {
             return res.status(400).json({ status: false, message: "ID invalide", code: 400 });

@@ -87,7 +87,7 @@ export class TripController {
 
     static async getById(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             
             if (isNaN(id)) {
                 res.status(400).json({
@@ -111,7 +111,7 @@ export class TripController {
 
     static async update(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             
             if (isNaN(id)) {
                 res.status(400).json({
@@ -182,7 +182,7 @@ export class TripController {
 
     static async softDelete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             const deletedBy = parseInt(req.body.deleted_by);
             
             if (isNaN(id) || isNaN(deletedBy)) {
@@ -207,7 +207,7 @@ export class TripController {
 
     static async restore(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             
             if (isNaN(id)) {
                 res.status(400).json({
@@ -231,7 +231,7 @@ export class TripController {
 
     static async delete(req: Request, res: Response): Promise<void> {
         try {
-            const id = parseInt(req.params.id);
+            const id = parseInt((req.params as { id: string }).id);
             
             if (isNaN(id)) {
                 res.status(400).json({
@@ -255,7 +255,7 @@ export class TripController {
 
     static async getByAgency(req: Request, res: Response): Promise<void> {
         try {
-            const agencyId = parseInt(req.params.agencyId);
+            const agencyId = parseInt((req.params as { agencyId: string }).agencyId);
             const isDeleted = req.query.is_deleted === 'true';
             
             if (isNaN(agencyId)) {

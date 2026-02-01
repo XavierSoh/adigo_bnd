@@ -20,11 +20,11 @@ export class AgencyController {
     }
 
     static async getAgencyById(req: Request, res: Response) {
-        const { id } = req.params;
-        const { includeDeleted } = req.query;
-        
+        const { id } = req.params as { id: string };
+        const { includeDeleted } = req.query as { includeDeleted?: string };
+
         const response = await AgencyRepository.findById(
-            parseInt(id), 
+            parseInt(id),
             includeDeleted === 'true'
         );
         res.status(response.code).json(response);
@@ -39,13 +39,13 @@ export class AgencyController {
     }
 
     static async updateAgency(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const logoPath = req.file?.path;
-        
+
         const updateData = {
             ...req.body,
             cities_served: req.body.cities_served?.split(',').map((city: string) => city.trim()),
-            logo: logoPath || req.body.logo // Garder l'ancien logo si pas de nouveau fichier
+            logo: logoPath || req.body.logo
         };
 
         const response = await AgencyRepository.update(parseInt(id), updateData);
@@ -53,17 +53,16 @@ export class AgencyController {
     }
 
     static async softDeleteAgency(req: Request, res: Response) {
-        const { id } = req.params;
-        const { deleted_by } = req.body; // ID de l'utilisateur qui supprime
+        const { id } = req.params as { id: string };
+        const { deleted_by } = req.body;
         if (!deleted_by) {
-             res.status(400).json({   
+             res.status(400).json({
                 status: false,
                 message: "L'ID de l'utilisateur qui supprime est requis",
                 code: 400
             });
         }
-         
-        
+
         const response = await AgencyRepository.softDelete(
             parseInt(id),
             deleted_by ? parseInt(deleted_by) : undefined
@@ -72,13 +71,13 @@ export class AgencyController {
     } 
 
     static async deleteAgency(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const response = await AgencyRepository.delete(parseInt(id));
         res.status(response.code).json(response);
     }
 
     static async restoreAgency(req: Request, res: Response) {
-        const { id } = req.params;
+        const { id } = req.params as { id: string };
         const response = await AgencyRepository.restore(parseInt(id));
         res.status(response.code).json(response);
     }
