@@ -1,0 +1,70 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const ticketing_1 = require("../../controllers/ticketing");
+const ticketingRouter = (0, express_1.Router)();
+// ============================================
+// CATEGORIES
+// ============================================
+ticketingRouter.get("/categories", ticketing_1.CategoryController.getAll);
+ticketingRouter.get("/categories/:id", ticketing_1.CategoryController.getById);
+ticketingRouter.post("/categories", ticketing_1.CategoryController.create);
+ticketingRouter.put("/categories/:id", ticketing_1.CategoryController.update);
+ticketingRouter.delete("/categories/:id", ticketing_1.CategoryController.delete);
+// ============================================
+// ORGANIZERS
+// ============================================
+ticketingRouter.get("/organizers", ticketing_1.OrganizerController.getAll);
+ticketingRouter.get("/organizers/:id", ticketing_1.OrganizerController.getById);
+ticketingRouter.get("/organizers/customer/:customerId", ticketing_1.OrganizerController.getByCustomerId);
+ticketingRouter.post("/organizers", ticketing_1.OrganizerController.create);
+ticketingRouter.put("/organizers/:id", ticketing_1.OrganizerController.update);
+ticketingRouter.patch("/organizers/:id/verify", ticketing_1.OrganizerController.verify);
+ticketingRouter.delete("/organizers/:id", ticketing_1.OrganizerController.delete);
+// ============================================
+// EVENTS
+// ============================================
+ticketingRouter.get("/events", ticketing_1.EventController.getAll);
+ticketingRouter.get("/events/search", ticketing_1.EventController.search);
+ticketingRouter.get("/events/:id", ticketing_1.EventController.getById);
+ticketingRouter.get("/events/code/:code", ticketing_1.EventController.getByCode);
+ticketingRouter.post("/events", ticketing_1.EventController.create);
+ticketingRouter.put("/events/:id", ticketing_1.EventController.update);
+ticketingRouter.patch("/events/:id/publish", ticketing_1.EventController.publish);
+ticketingRouter.patch("/events/:id/approve", ticketing_1.EventController.approve);
+ticketingRouter.patch("/events/:id/cancel", ticketing_1.EventController.cancel);
+ticketingRouter.delete("/events/:id", ticketing_1.EventController.delete);
+// Event Ticket Types
+ticketingRouter.get("/events/:id/ticket-types", ticketing_1.EventController.getTicketTypes);
+ticketingRouter.post("/events/:id/ticket-types", ticketing_1.EventController.createTicketType);
+ticketingRouter.put("/events/:id/ticket-types/:typeId", ticketing_1.EventController.updateTicketType);
+ticketingRouter.delete("/events/:id/ticket-types/:typeId", ticketing_1.EventController.deleteTicketType);
+// ============================================
+// TICKETS
+// ============================================
+ticketingRouter.get("/tickets/customer/:customerId", ticketing_1.TicketController.getMyTickets);
+ticketingRouter.get("/tickets/:id", ticketing_1.TicketController.getById);
+ticketingRouter.get("/tickets/ref/:reference", ticketing_1.TicketController.getByReference);
+ticketingRouter.post("/tickets/purchase", ticketing_1.TicketController.purchase);
+ticketingRouter.patch("/tickets/:id/payment", ticketing_1.TicketController.confirmPayment);
+ticketingRouter.patch("/tickets/:id/validate", ticketing_1.TicketController.validate);
+ticketingRouter.post("/tickets/validate-qr", ticketing_1.TicketController.validateByQr);
+ticketingRouter.patch("/tickets/:id/cancel", ticketing_1.TicketController.cancel);
+// ============================================
+// FAVORITES
+// ============================================
+ticketingRouter.get("/favorites/customer/:customerId", ticketing_1.FavoriteController.getMyFavorites);
+ticketingRouter.get("/favorites/check/:eventId", ticketing_1.FavoriteController.check);
+ticketingRouter.post("/favorites/:eventId", ticketing_1.FavoriteController.add);
+ticketingRouter.delete("/favorites/:eventId", ticketing_1.FavoriteController.remove);
+ticketingRouter.post("/favorites/:eventId/toggle", ticketing_1.FavoriteController.toggle);
+// ============================================
+// REVIEWS
+// ============================================
+ticketingRouter.get("/reviews/event/:eventId", ticketing_1.ReviewController.getByEventId);
+ticketingRouter.get("/reviews/event/:eventId/stats", ticketing_1.ReviewController.getEventStats);
+ticketingRouter.post("/reviews", ticketing_1.ReviewController.create);
+ticketingRouter.put("/reviews/:id", ticketing_1.ReviewController.update);
+ticketingRouter.delete("/reviews/:id", ticketing_1.ReviewController.delete);
+ticketingRouter.patch("/reviews/:id/approve", ticketing_1.ReviewController.approve);
+exports.default = ticketingRouter;

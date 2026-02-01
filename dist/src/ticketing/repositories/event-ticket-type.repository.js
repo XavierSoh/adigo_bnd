@@ -1,0 +1,278 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EventTicketTypeRepository = void 0;
+const pgdb_1 = __importDefault(require("../../config/pgdb"));
+const table_names_1 = require("../../utils/table_names");
+class EventTicketTypeRepository {
+    // Create new ticket type
+    static async create(ticketType, createdBy) {
+        try {
+            const result = await pgdb_1.default.one(`INSERT INTO ${table_names_1.kEventTicketType} (
+                    event_id, name, description, price, quantity,
+                    available_quantity, min_per_order, max_per_order,
+                    sale_start_date, sale_end_date, is_active,
+                    benefits, display_order, created_by
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                RETURNING *`, [
+                ticketType.event_id,
+                ticketType.name,
+                ticketType.description,
+                ticketType.price,
+                ticketType.quantity,
+                ticketType.quantity, // available_quantity = quantity initially
+                ticketType.min_per_order ?? 1,
+                ticketType.max_per_order,
+                ticketType.sale_start_date,
+                ticketType.sale_end_date,
+                ticketType.is_active ?? true,
+                ticketType.benefits,
+                ticketType.display_order ?? 0,
+                createdBy
+            ]);
+            return { status: true, message: "Type de ticket créé", body: result, code: 201 };
+        }
+        catch (error) {
+            console.log(`Erreur création type de ticket: ${JSON.stringify(error)}`);
+            return { status: false, message: "Erreur lors de la création du type de ticket", code: 500 };
+        }
+    }
+    // Find by ID
+    static async findById(id) {
+        try {
+            const ticketType = await pgdb_1.default.oneOrNone(`SELECT ${this.BASE_SELECT}
+                ${this.BASE_JOINS}
+                WHERE tt.id = $1 AND tt.is_deleted = FALSE`, [id]);
+            if (!ticketType) {
+                return { status: false, message: "Type de ticket non trouvé", code: 404 };
+            }
+            return { status: true, message: "Type de ticket trouvé", body: ticketType, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la recherche du type de ticket", code: 500 };
+        }
+    }
+    // Find by event ID
+    static async findByEventId(eventId, activeOnly = true) {
+        try {
+            let query = `
+                SELECT ${this.BASE_SELECT}
+                ${this.BASE_JOINS}
+                WHERE tt.event_id = $1 AND tt.is_deleted = FALSE
+            `;
+            if (activeOnly) {
+                query += ' AND tt.is_active = TRUE';
+            }
+            query += ' ORDER BY tt.display_order ASC, tt.price ASC';
+            const ticketTypes = await pgdb_1.default.any(query, [eventId]);
+            return { status: true, message: "Types de tickets récupérés", body: ticketTypes, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la récupération des types de tickets", code: 500 };
+        }
+    }
+    // Update ticket type
+    static async update(id, ticketType) {
+        try {
+            const result = await pgdb_1.default.oneOrNone(`UPDATE ${table_names_1.kEventTicketType} SET
+                    name = COALESCE($1, name),
+                    description = COALESCE($2, description),
+                    price = COALESCE($3, price),
+                    quantity = COALESCE($4, quantity),
+                    min_per_order = COALESCE($5, min_per_order),
+                    max_per_order = COALESCE($6, max_per_order),
+                    sale_start_date = COALESCE($7, sale_start_date),
+                    sale_end_date = COALESCE($8, sale_end_date),
+                    is_active = COALESCE($9, is_active),
+                    benefits = COALESCE($10, benefits),
+                    display_order = COALESCE($11, display_order),
+                    updated_at = NOW()
+                WHERE id = $12 AND is_deleted = FALSE
+                RETURNING *`, [
+                ticketType.name,
+                ticketType.description,
+                ticketType.price,
+                ticketType.quantity,
+                ticketType.min_per_order,
+                ticketType.max_per_order,
+                ticketType.sale_start_date,
+                ticketType.sale_end_date,
+                ticketType.is_active,
+                ticketType.benefits,
+                ticketType.display_order,
+                id
+            ]);
+            if (!result) {
+                return { status: false, message: "Type de ticket non trouvé", code: 404 };
+            }
+            return { status: true, message: "Type de ticket mis à jour", body: result, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la mise à jour du type de ticket", code: 500 };
+        }
+    }
+    // Decrease available quantity (when ticket is purchased)
+    static async decreaseAvailableQuantity(id, quantity) {
+        try {
+            const result = await pgdb_1.default.oneOrNone(`UPDATE ${table_names_1.kEventTicketType} SET
+                    available_quantity = available_quantity - $1,
+                    updated_at = NOW()
+                WHERE id = $2 AND is_deleted = FALSE AND available_quantity >= $1
+                RETURNING *`, [quantity, id]);
+            if (!result) {
+                return { status: false, message: "Type de ticket non trouvé ou stock insuffisant", code: 404 };
+            }
+            return { status: true, message: "Quantité mise à jour", body: result, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la mise à jour de la quantité", code: 500 };
+        }
+    }
+    // Increase available quantity (when ticket is refunded)
+    static async increaseAvailableQuantity(id, quantity) {
+        try {
+            const result = await pgdb_1.default.oneOrNone(`UPDATE ${table_names_1.kEventTicketType} SET
+                    available_quantity = available_quantity + $1,
+                    updated_at = NOW()
+                WHERE id = $2 AND is_deleted = FALSE
+                RETURNING *`, [quantity, id]);
+            if (!result) {
+                return { status: false, message: "Type de ticket non trouvé", code: 404 };
+            }
+            return { status: true, message: "Quantité mise à jour", body: result, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la mise à jour de la quantité", code: 500 };
+        }
+    }
+    // Check availability
+    static async checkAvailability(id, requestedQuantity) {
+        try {
+            const ticketType = await pgdb_1.default.oneOrNone(`SELECT id, name, available_quantity, is_active, sale_start_date, sale_end_date
+                FROM ${table_names_1.kEventTicketType}
+                WHERE id = $1 AND is_deleted = FALSE`, [id]);
+            if (!ticketType) {
+                return { status: false, message: "Type de ticket non trouvé", code: 404 };
+            }
+            if (!ticketType.is_active) {
+                return { status: false, message: "Ce type de ticket n'est pas actif", code: 400 };
+            }
+            const now = new Date();
+            if (ticketType.sale_start_date && new Date(ticketType.sale_start_date) > now) {
+                return { status: false, message: "La vente n'a pas encore commencé pour ce type de ticket", code: 400 };
+            }
+            if (ticketType.sale_end_date && new Date(ticketType.sale_end_date) < now) {
+                return { status: false, message: "La vente est terminée pour ce type de ticket", code: 400 };
+            }
+            const available = ticketType.available_quantity >= requestedQuantity;
+            return {
+                status: available,
+                message: available ? "Tickets disponibles" : "Stock insuffisant",
+                body: { available, available_quantity: ticketType.available_quantity },
+                code: available ? 200 : 400
+            };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la vérification de disponibilité", code: 500 };
+        }
+    }
+    // Get statistics by event
+    static async getStatisticsByEvent(eventId) {
+        try {
+            const stats = await pgdb_1.default.any(`SELECT
+                    tt.id,
+                    tt.name,
+                    tt.price,
+                    tt.quantity,
+                    tt.available_quantity,
+                    (tt.quantity - tt.available_quantity) as sold_quantity,
+                    ROUND(((tt.quantity - tt.available_quantity)::DECIMAL / tt.quantity) * 100, 2) as sold_percentage
+                FROM ${table_names_1.kEventTicketType} tt
+                WHERE tt.event_id = $1 AND tt.is_deleted = FALSE
+                ORDER BY tt.display_order ASC`, [eventId]);
+            return { status: true, message: "Statistiques récupérées", body: stats, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la récupération des statistiques", code: 500 };
+        }
+    }
+    // Reorder ticket types
+    static async reorder(ticketTypeOrders) {
+        try {
+            for (const item of ticketTypeOrders) {
+                await pgdb_1.default.none(`UPDATE ${table_names_1.kEventTicketType} SET display_order = $1, updated_at = NOW() WHERE id = $2`, [item.display_order, item.id]);
+            }
+            return { status: true, message: "Ordre des types de tickets mis à jour", code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la réorganisation des types de tickets", code: 500 };
+        }
+    }
+    // Soft delete ticket type
+    static async softDelete(id, deletedBy) {
+        try {
+            const result = await pgdb_1.default.result(`UPDATE ${table_names_1.kEventTicketType} SET
+                    is_deleted = TRUE,
+                    deleted_at = NOW(),
+                    deleted_by = $2,
+                    updated_at = NOW()
+                WHERE id = $1 AND is_deleted = FALSE`, [id, deletedBy]);
+            if (result.rowCount === 0) {
+                return { status: false, message: "Type de ticket non trouvé ou déjà supprimé", code: 404 };
+            }
+            return { status: true, message: "Type de ticket supprimé", code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la suppression du type de ticket", code: 500 };
+        }
+    }
+    // Restore soft deleted ticket type
+    static async restore(id) {
+        try {
+            const result = await pgdb_1.default.oneOrNone(`UPDATE ${table_names_1.kEventTicketType} SET
+                    is_deleted = FALSE,
+                    deleted_at = NULL,
+                    deleted_by = NULL,
+                    updated_at = NOW()
+                WHERE id = $1 AND is_deleted = TRUE
+                RETURNING *`, [id]);
+            if (!result) {
+                return { status: false, message: "Type de ticket non trouvé", code: 404 };
+            }
+            return { status: true, message: "Type de ticket restauré", body: result, code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la restauration du type de ticket", code: 500 };
+        }
+    }
+    // Hard delete ticket type
+    static async delete(id) {
+        try {
+            const result = await pgdb_1.default.result(`DELETE FROM ${table_names_1.kEventTicketType} WHERE id = $1`, [id]);
+            if (result.rowCount === 0) {
+                return { status: false, message: "Type de ticket non trouvé", code: 404 };
+            }
+            return { status: true, message: "Type de ticket supprimé définitivement", code: 200 };
+        }
+        catch (error) {
+            return { status: false, message: "Erreur lors de la suppression du type de ticket", code: 500 };
+        }
+    }
+}
+exports.EventTicketTypeRepository = EventTicketTypeRepository;
+EventTicketTypeRepository.BASE_SELECT = `
+        tt.*,
+        json_build_object(
+            'id', e.id,
+            'title', e.title,
+            'event_code', e.event_code,
+            'event_date', e.event_date,
+            'organizer_id', e.organizer_id
+        ) AS event
+    `;
+EventTicketTypeRepository.BASE_JOINS = `
+        FROM ${table_names_1.kEventTicketType} tt
+        LEFT JOIN ${table_names_1.kEvent} e ON tt.event_id = e.id
+    `;

@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.kInvalidCredentials = exports.kInvalidPassword = exports.kInvalidUser = exports.kDenied = exports.kSuccess = exports.kUsers = exports.kMd5 = exports.kInitialPassword = exports.kInitialLogin = void 0;
+exports.kInitialLogin = 'admin';
+exports.kInitialPassword = 'admin';
+exports.kMd5 = '7e77ceb2953391406e1808857940ad5c';
+exports.kUsers = 'users';
+exports.kSuccess = 'success';
+exports.kDenied = 'Access denied';
+exports.kInvalidUser = 'Invalide user, missing login / password';
+exports.kInvalidPassword = 'Invalid password';
+exports.kInvalidCredentials = 'Invalid credentials';

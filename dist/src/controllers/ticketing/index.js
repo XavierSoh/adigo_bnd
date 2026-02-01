@@ -1,0 +1,15 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ReviewController = exports.FavoriteController = exports.TicketController = exports.EventController = exports.OrganizerController = exports.CategoryController = void 0;
+var category_controller_1 = require("./category.controller");
+Object.defineProperty(exports, "CategoryController", { enumerable: true, get: function () { return category_controller_1.CategoryController; } });
+var organizer_controller_1 = require("./organizer.controller");
+Object.defineProperty(exports, "OrganizerController", { enumerable: true, get: function () { return organizer_controller_1.OrganizerController; } });
+var event_controller_1 = require("./event.controller");
+Object.defineProperty(exports, "EventController", { enumerable: true, get: function () { return event_controller_1.EventController; } });
+var ticket_controller_1 = require("./ticket.controller");
+Object.defineProperty(exports, "TicketController", { enumerable: true, get: function () { return ticket_controller_1.TicketController; } });
+var favorite_controller_1 = require("./favorite.controller");
+Object.defineProperty(exports, "FavoriteController", { enumerable: true, get: function () { return favorite_controller_1.FavoriteController; } });
+var review_controller_1 = require("./review.controller");
+Object.defineProperty(exports, "ReviewController", { enumerable: true, get: function () { return review_controller_1.ReviewController; } });

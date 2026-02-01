@@ -1,0 +1,9 @@
+export declare const kInitialLogin = "admin";
+export declare const kInitialPassword = "admin";
+export declare const kMd5 = "7e77ceb2953391406e1808857940ad5c";
+export declare const kUsers = "users";
+export declare const kSuccess = "success";
+export declare const kDenied = "Access denied";
+export declare const kInvalidUser = "Invalide user, missing login / password";
+export declare const kInvalidPassword = "Invalid password";
+export declare const kInvalidCredentials = "Invalid credentials";

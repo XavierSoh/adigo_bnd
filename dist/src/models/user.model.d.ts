@@ -1,0 +1,40 @@
+export type UserJSON = {
+    token?: string;
+    id?: number;
+    login: string;
+    password: string;
+    phone?: string;
+    creation_date?: Date;
+    profile?: number;
+    staff?: number;
+    super_u?: string;
+    account_status?: 'deleted' | 'disabled' | 'enabled';
+    is_deleted?: boolean;
+    deleted_at?: Date;
+    deleted_by?: number;
+    user_name?: string;
+    is_online?: boolean;
+    role?: 'admin' | 'teacher' | 'student' | 'parent' | 'guest';
+    language?: 'fr' | 'en';
+};
+export default class UserModel {
+    constructor({ token, id, login, password, phone, creation_date, profile, staff, super_u, account_status, is_deleted, deleted_at, deleted_by, user_name, is_online, role, language, }: UserJSON);
+    token?: string;
+    id?: number;
+    login: string;
+    password: string;
+    phone?: string;
+    creation_date?: Date;
+    profile?: number;
+    staff?: number;
+    super_u?: string;
+    account_status?: 'deleted' | 'disabled' | 'enabled';
+    is_deleted?: boolean;
+    deleted_at?: Date;
+    deleted_by?: number;
+    user_name?: string;
+    is_online?: boolean;
+    role?: 'admin' | 'teacher' | 'student' | 'parent' | 'guest';
+    language: 'fr' | 'en';
+    static fromJson(json: UserJSON): UserModel;
+}
