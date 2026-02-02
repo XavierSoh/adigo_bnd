@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import fs from 'fs';
 import * as dbInit from './config/init_db';
 import { languageMiddleware } from './middleware/language.middleware';
 
@@ -43,7 +44,10 @@ app.use(languageMiddleware);
 
 // Home page
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+  const publicPath = path.join(__dirname, '../src/public/index.html');
+  const distPublicPath = path.join(__dirname, '../public/index.html');
+  const filePath = fs.existsSync(publicPath) ? publicPath : distPublicPath;
+  res.sendFile(filePath);
 });
 
 // Routes
