@@ -7,7 +7,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
@@ -18,6 +18,13 @@ jobs:
           script: |
             cd /var/www/adigo
             git pull origin main
+            cat > .env.firebase << 'EOF'
+            FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+            FIREBASE_PRIVATE_KEY=${{ secrets.FIREBASE_PRIVATE_KEY }}
+            FIREBASE_CLIENT_EMAIL=${{ secrets.FIREBASE_CLIENT_EMAIL }}
+            EOF
+            cat .env.firebase >> .env
             npm install
             npm run build
             pm2 restart adigo-api || pm2 start ecosystem.config.js
+            rm .env.firebase
