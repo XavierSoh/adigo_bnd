@@ -4,8 +4,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
 import fs from 'fs';
+import swaggerUi from 'swagger-ui-express';
 import * as dbInit from './config/init_db';
 import { languageMiddleware } from './middleware/language.middleware';
+import { swaggerSpec } from './swagger/swagger';
 
 // Routers
 import usersRouter from './routes/users.router';
@@ -49,6 +51,13 @@ app.get('/', (req, res) => {
   const filePath = fs.existsSync(publicPath) ? publicPath : distPublicPath;
   res.sendFile(filePath);
 });
+
+// Swagger documentation
+app.use('/v1/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  swaggerOptions: {
+    persistAuthorization: true,
+  },
+}));
 
 // Routes
 app.use('/v1/api/users', usersRouter);

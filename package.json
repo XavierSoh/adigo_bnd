@@ -445,6 +445,8 @@
     "supertest": "^7.1.4",
     "supports-color": "^7.2.0",
     "supports-preserve-symlinks-flag": "^1.0.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
     "tar-stream": "^2.2.0",
     "teeny-request": "^9.0.0",
     "test-exclude": "^6.0.0",
