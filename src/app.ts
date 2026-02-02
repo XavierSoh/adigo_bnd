@@ -7,6 +7,7 @@ import fs from 'fs';
 import swaggerUi from 'swagger-ui-express';
 import * as dbInit from './config/init_db';
 import { languageMiddleware } from './middleware/language.middleware';
+import { authMiddleware } from './middleware/auth.middleware';
 import { swaggerSpec } from './swagger/swagger';
 
 // Routers
