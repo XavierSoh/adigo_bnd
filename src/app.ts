@@ -41,6 +41,11 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Language detection middleware (doit être après express.json())
 app.use(languageMiddleware);
 
+// Home page
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
 // Routes
 app.use('/v1/api/users', usersRouter);
 app.use('/v1/api/staff', staffRouter); 
