@@ -13,7 +13,9 @@
       "Bash(npm run build:*)",
       "mcp__ide__getDiagnostics",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "WebFetch(domain:console.firebase.google.com)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
