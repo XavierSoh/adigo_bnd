@@ -31,8 +31,6 @@ import companySettingsRouter from './routes/company-settings.router';
 import dashboardRouter from './routes/dashboard.router';
 import ticketingRouter from './routes/ticketing';
 import vtcRouter from './routes/vtc.router';
-import foodRouter from './routes/food.router';
-import parcelRouter from './routes/parcel.router';
 import paymentRouter from './routes/payment.router';
 import './services/payment/providers';
 import './services/payment/settlement-handlers';
@@ -89,11 +87,11 @@ app.use('/v1/api/ticketing', ticketingRouter);
 // VTC Module
 app.use('/v1/api/vtc', vtcRouter);
 
-// Food Delivery Module
-app.use('/v1/api/food', foodRouter);
-
-// Parcel Delivery Module
-app.use('/v1/api/parcel', parcelRouter);
+// Food Delivery / Parcel Delivery modules removed (pg-promise→Prisma
+// cleanup): scaffolded, never had backing DB tables
+// (restaurants/food_orders/parcel_shipments never existed in the schema —
+// see BOOKING_MODULE_NOTES.md), every route always 500'd. Deleted rather
+// than converted, per explicit user decision.
 
 // Payments (Orange Money)
 app.use('/v1/api/payments', paymentRouter);

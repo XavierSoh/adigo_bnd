@@ -1,7 +1,9 @@
+// Migrated to Prisma's native model API — see BOOKING_MODULE_NOTES.md
+// ("Full Prisma relational-API migration", tier 4).
 import { registerSettlementHandler } from "../payment-settlement.registry";
 import { BookingRepository } from "../../../repository/booking.repository";
 import { TierService } from "../../tier.service";
-import { pgOneOrNone, pgAny } from "../../../utils/prisma-compat";
+import prismaDb from "../../../config/prismaClient";
 
 /**
  * Wired to both booking payment entry points:
@@ -18,21 +20,22 @@ registerSettlementHandler('booking', async (transaction) => {
     }
     const reference = transaction.provider_txn_id || transaction.pay_token || undefined;
 
-    const booking = await pgOneOrNone(
-        `SELECT id, group_id FROM booking WHERE id = $1`,
-        [transaction.purpose_ref_id]
-    );
+    const booking = await prismaDb.booking.findUnique({
+        where: { id: transaction.purpose_ref_id },
+        select: { id: true, group_id: true },
+    });
     if (!booking) {
         console.error(`⚠️ booking settlement: booking ${transaction.purpose_ref_id} not found`);
         return;
     }
 
-    const bookingIds: number[] = booking.group_id
-        ? (await pgAny(
-              `SELECT id FROM booking WHERE group_id = $1 AND is_deleted = FALSE`,
-              [booking.group_id]
-          )).map((b: any) => b.id)
-        : [booking.id];
+    let bookingIds: number[];
+    if (booking.group_id) {
+        const groupResult = await BookingRepository.findByGroupId(booking.group_id);
+        bookingIds = groupResult.status ? (groupResult.body as any[]).map((b) => b.id) : [];
+    } else {
+        bookingIds = [booking.id];
+    }
 
     for (const id of bookingIds) {
         const result = await BookingRepository.update(id, {

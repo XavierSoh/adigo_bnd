@@ -1,8 +1,9 @@
 // tripScheduler.service.ts
+// Migrated to Prisma's native model API — see BOOKING_MODULE_NOTES.md
+// ("Full Prisma relational-API migration", tier 4).
 import cron from 'node-cron';
 import { TripGenerationService } from './tripGeneration.service';
-import { pgNone } from '../utils/prisma-compat';
-import * as tbl from "../utils/table_names";
+import prismaDb from '../config/prismaClient';
 
 export class TripSchedulerService {
     private generationService: TripGenerationService;
@@ -43,11 +44,12 @@ export class TripSchedulerService {
     private async cleanupPastTrips(): Promise<void> {
 
         const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7); 
-        await pgNone(`
-            DELETE FROM ${tbl.kGeneratedTrip} 
-            WHERE actual_departure_time < $1
-            AND status IN ('completed', 'cancelled')
-        `, [oneWeekAgo]);
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        await prismaDb.generated_trip.deleteMany({
+            where: {
+                actual_departure_time: { lt: oneWeekAgo },
+                status: { in: ['completed', 'cancelled'] },
+            },
+        });
     }
 }

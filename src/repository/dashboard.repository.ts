@@ -1,6 +1,7 @@
-// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
-// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
-import { pgOne, pgAny } from "../utils/prisma-compat";
+// Migrated to Prisma's native model API — see BOOKING_MODULE_NOTES.md
+// ("Full Prisma relational-API migration", tier 4).
+import { Prisma } from "@prisma/client";
+import prismaDb from "../config/prismaClient";
 import ResponseModel from "../models/response.model";
 import {
     DashboardData,
@@ -10,6 +11,17 @@ import {
     UpcomingTrip,
     RecentBooking
 } from "../models/dashboard.model";
+
+// `CURRENT_DATE - INTERVAL '...'` depends on Postgres's session TimeZone
+// GUC (observed as Europe/Paris elsewhere in this migration, distinct from
+// the Node process's Africa/Douala) — this uses the Node process's local
+// midnight instead, consistent with how every other "local day" boundary
+// in this migration is computed. Flagged, not assumed identical.
+function localMidnightDaysAgo(days: number): Date {
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return new Date(todayMidnight.getTime() - days * 24 * 60 * 60 * 1000);
+}
 
 export class DashboardRepository {
 
@@ -53,43 +65,39 @@ export class DashboardRepository {
      * Get dashboard statistics
      */
     private static async getStats(agencyId?: number): Promise<DashboardStats> {
-        const agencyFilter = agencyId ? 'AND ag.id = $1' : '';
-        const params = agencyId ? [agencyId] : [];
+        const agencyWhere: Prisma.bookingWhereInput = agencyId ? { generated_trip: { trip: { agency_id: agencyId } } } : {};
 
-        // Get current period stats
-        const currentStats = await pgOne(`
-            SELECT
-                COALESCE(SUM(b.total_price), 0) as total_revenue,
-                COUNT(DISTINCT b.id) as total_bookings,
-                COUNT(DISTINCT gt.id) as total_trips,
-                COUNT(DISTINCT c.id) as total_customers
-            FROM booking b
-            LEFT JOIN generated_trip gt ON b.generated_trip_id = gt.id
-            LEFT JOIN trip t ON gt.trip_id = t.id
-            LEFT JOIN agency ag ON t.agency_id = ag.id
-            LEFT JOIN customer c ON b.customer_id = c.id
-            WHERE b.is_deleted = false
-            AND b.booking_date >= CURRENT_DATE - INTERVAL '30 days'
-            ${agencyFilter}
-        `, params);
+        // `COUNT(DISTINCT gt.id)`/`COUNT(DISTINCT c.id)` across a JOIN —
+        // no server-side distinct-count-of-a-related-column in the model
+        // API, so both windows fetch the matching bookings' own
+        // total_price/generated_trip_id/customer_id and compute
+        // SUM/COUNT/DISTINCT-count in JS instead (flagged perf tradeoff:
+        // N rows over the wire instead of a single aggregate query, same
+        // tradeoff already accepted elsewhere in this migration).
+        const fetchWindow = async (gte: Date, lt?: Date) => {
+            const rows = await prismaDb.booking.findMany({
+                where: {
+                    ...agencyWhere,
+                    is_deleted: false,
+                    booking_date: lt ? { gte, lt } : { gte },
+                },
+                select: { total_price: true, generated_trip_id: true, customer_id: true },
+            });
+            return {
+                totalRevenue: rows.reduce((sum, r) => sum + r.total_price, 0),
+                totalBookings: rows.length,
+                totalTrips: new Set(rows.map((r) => r.generated_trip_id)).size,
+                totalCustomers: new Set(rows.map((r) => r.customer_id)).size,
+            };
+        };
 
-        // Get previous period stats for comparison
-        const previousStats = await pgOne(`
-            SELECT
-                COALESCE(SUM(b.total_price), 0) as total_revenue,
-                COUNT(DISTINCT b.id) as total_bookings,
-                COUNT(DISTINCT gt.id) as total_trips,
-                COUNT(DISTINCT c.id) as total_customers
-            FROM booking b
-            LEFT JOIN generated_trip gt ON b.generated_trip_id = gt.id
-            LEFT JOIN trip t ON gt.trip_id = t.id
-            LEFT JOIN agency ag ON t.agency_id = ag.id
-            LEFT JOIN customer c ON b.customer_id = c.id
-            WHERE b.is_deleted = false
-            AND b.booking_date >= CURRENT_DATE - INTERVAL '60 days'
-            AND b.booking_date < CURRENT_DATE - INTERVAL '30 days'
-            ${agencyFilter}
-        `, params);
+        const thirtyDaysAgo = localMidnightDaysAgo(30);
+        const sixtyDaysAgo = localMidnightDaysAgo(60);
+
+        const [currentStats, previousStats] = await Promise.all([
+            fetchWindow(thirtyDaysAgo),
+            fetchWindow(sixtyDaysAgo, thirtyDaysAgo),
+        ]);
 
         const calculateChange = (current: number, previous: number): number => {
             if (previous === 0) return current > 0 ? 100 : 0;
@@ -97,26 +105,14 @@ export class DashboardRepository {
         };
 
         return {
-            totalRevenue: parseFloat(currentStats.total_revenue) || 0,
-            totalBookings: parseInt(currentStats.total_bookings) || 0,
-            totalTrips: parseInt(currentStats.total_trips) || 0,
-            totalCustomers: parseInt(currentStats.total_customers) || 0,
-            revenueChange: calculateChange(
-                parseFloat(currentStats.total_revenue) || 0,
-                parseFloat(previousStats.total_revenue) || 0
-            ),
-            bookingsChange: calculateChange(
-                parseInt(currentStats.total_bookings) || 0,
-                parseInt(previousStats.total_bookings) || 0
-            ),
-            tripsChange: calculateChange(
-                parseInt(currentStats.total_trips) || 0,
-                parseInt(previousStats.total_trips) || 0
-            ),
-            customersChange: calculateChange(
-                parseInt(currentStats.total_customers) || 0,
-                parseInt(previousStats.total_customers) || 0
-            )
+            totalRevenue: currentStats.totalRevenue,
+            totalBookings: currentStats.totalBookings,
+            totalTrips: currentStats.totalTrips,
+            totalCustomers: currentStats.totalCustomers,
+            revenueChange: calculateChange(currentStats.totalRevenue, previousStats.totalRevenue),
+            bookingsChange: calculateChange(currentStats.totalBookings, previousStats.totalBookings),
+            tripsChange: calculateChange(currentStats.totalTrips, previousStats.totalTrips),
+            customersChange: calculateChange(currentStats.totalCustomers, previousStats.totalCustomers),
         };
     }
 
@@ -124,62 +120,65 @@ export class DashboardRepository {
      * Get revenue chart data for the last N days
      */
     private static async getRevenueChartData(agencyId: number | undefined, days: number): Promise<RevenueChartData[]> {
-        const agencyFilter = agencyId ? 'AND ag.id = $2' : '';
-        const params = agencyId ? [days, agencyId] : [days];
+        const rows = await prismaDb.booking.findMany({
+            where: {
+                is_deleted: false,
+                booking_date: { gte: localMidnightDaysAgo(days) },
+                ...(agencyId ? { generated_trip: { trip: { agency_id: agencyId } } } : {}),
+            },
+            select: { booking_date: true, total_price: true },
+        });
 
-        const data = await pgAny(`
-            SELECT
-                DATE(b.booking_date) as date,
-                COALESCE(SUM(b.total_price), 0) as revenue,
-                COUNT(b.id) as bookings
-            FROM booking b
-            LEFT JOIN generated_trip gt ON b.generated_trip_id = gt.id
-            LEFT JOIN trip t ON gt.trip_id = t.id
-            LEFT JOIN agency ag ON t.agency_id = ag.id
-            WHERE b.is_deleted = false
-            AND b.booking_date >= CURRENT_DATE - ($1 || ' days')::INTERVAL
-            ${agencyFilter}
-            GROUP BY DATE(b.booking_date)
-            ORDER BY date ASC
-        `, params);
+        // `DATE(b.booking_date)` + `GROUP BY` — bucketed by calendar day
+        // in JS instead (same day-bucketing pattern used for admin-
+        // analytics's sales trends).
+        const buckets = new Map<string, { revenue: number; bookings: number }>();
+        for (const row of rows) {
+            const d = row.booking_date ?? new Date();
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const bucket = buckets.get(key) ?? { revenue: 0, bookings: 0 };
+            bucket.revenue += row.total_price;
+            bucket.bookings += 1;
+            buckets.set(key, bucket);
+        }
 
-        return data.map(row => ({
-            date: row.date,
-            revenue: parseFloat(row.revenue) || 0,
-            bookings: parseInt(row.bookings) || 0
-        }));
+        return Array.from(buckets.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([date, v]) => ({ date, ...v }));
     }
 
     /**
      * Get occupation data
      */
     private static async getOccupationData(agencyId?: number): Promise<OccupationData> {
-        const agencyFilter = agencyId ? 'AND ag.id = $1' : '';
-        const params = agencyId ? [agencyId] : [];
+        // `gts.status` here is the RAW stored column (not the live-
+        // derived available/reserved/booked status
+        // generated_trip_seat_repository.ts's other read methods compute
+        // from active bookings) — reproduced as-is, matching the
+        // original's own `gts.status = 'booked'`/`= 'available'` filters
+        // exactly, stale-column caveat included (see
+        // generated_trip_seat_repository.ts's header comment).
+        const where: Prisma.generated_trip_seatWhereInput = {
+            generated_trip: {
+                status: { in: ['scheduled', 'boarding', 'departed'] },
+                actual_departure_time: { gte: new Date() },
+                ...(agencyId ? { trip: { agency_id: agencyId } } : {}),
+            },
+        };
 
-        const data = await pgOne(`
-            SELECT
-                COUNT(DISTINCT gts.id) FILTER (WHERE gts.status = 'booked') as occupied,
-                COUNT(DISTINCT gts.id) FILTER (WHERE gts.status = 'available') as available,
-                COUNT(DISTINCT gts.id) as total
-            FROM generated_trip_seat gts
-            LEFT JOIN generated_trip gt ON gts.generated_trip_id = gt.id
-            LEFT JOIN trip t ON gt.trip_id = t.id
-            LEFT JOIN agency ag ON t.agency_id = ag.id
-            WHERE gt.status IN ('scheduled', 'boarding', 'departed')
-            AND gt.actual_departure_time >= NOW()
-            ${agencyFilter}
-        `, params);
+        const [occupied, available, total] = await Promise.all([
+            prismaDb.generated_trip_seat.count({ where: { ...where, status: 'booked' } }),
+            prismaDb.generated_trip_seat.count({ where: { ...where, status: 'available' } }),
+            prismaDb.generated_trip_seat.count({ where }),
+        ]);
 
-        const occupied = parseInt(data.occupied) || 0;
-        const available = parseInt(data.available) || 0;
-        const total = parseInt(data.total) || 1; // Avoid division by zero
+        const safeTotal = total || 1; // Avoid division by zero, matches original
 
         return {
             occupied,
             available,
-            total,
-            percentage: (occupied / total) * 100
+            total: safeTotal,
+            percentage: (occupied / safeTotal) * 100
         };
     }
 
@@ -187,92 +186,76 @@ export class DashboardRepository {
      * Get upcoming trips
      */
     private static async getUpcomingTrips(agencyId: number | undefined, limit: number): Promise<UpcomingTrip[]> {
-        const agencyFilter = agencyId ? `AND ag.id = $2` : '';
-        const params = agencyId ? [limit, agencyId] : [limit];
+        const rows = await prismaDb.generated_trip.findMany({
+            where: {
+                status: { in: ['scheduled', 'boarding'] },
+                actual_departure_time: { gte: new Date() },
+                ...(agencyId ? { trip: { agency_id: agencyId } } : {}),
+            },
+            include: {
+                trip: { select: { departure_city: true, arrival_city: true } },
+                bus: { select: { registration_number: true, capacity: true } },
+                staff_generated_trip_driver_idTostaff: { select: { first_name: true, last_name: true } },
+            },
+            orderBy: { actual_departure_time: 'asc' },
+            take: limit,
+        });
 
-        const trips = await pgAny(`
-            SELECT
-                gt.id,
-                gt.trip_id,
-                t.departure_city,
-                t.arrival_city,
-                gt.actual_departure_time as departure_time,
-                b.registration_number as bus_name,
-                b.registration_number as bus_plate_number,
-                gt.available_seats,
-                b.capacity as total_seats,
-                gt.status,
-                CONCAT(s.first_name, ' ', s.last_name) as driver_name
-            FROM generated_trip gt
-            LEFT JOIN trip t ON gt.trip_id = t.id
-            LEFT JOIN agency ag ON t.agency_id = ag.id
-            LEFT JOIN bus b ON gt.bus_id = b.id
-            LEFT JOIN staff s ON gt.driver_id = s.id
-            WHERE gt.status IN ('scheduled', 'boarding')
-            AND gt.actual_departure_time >= NOW()
-            ${agencyFilter}
-            ORDER BY gt.actual_departure_time ASC
-            LIMIT $1
-        `, params);
-
-        return trips.map(trip => ({
-            id: trip.id,
-            trip_id: trip.trip_id,
-            departure_city: trip.departure_city,
-            arrival_city: trip.arrival_city,
-            departure_time: trip.departure_time,
-            bus_name: trip.bus_name,
-            bus_plate_number: trip.bus_plate_number,
-            available_seats: trip.available_seats,
-            total_seats: trip.total_seats,
-            status: trip.status,
-            driver_name: trip.driver_name
-        }));
+        return rows.map((gt) => ({
+            id: gt.id,
+            trip_id: gt.trip_id,
+            departure_city: gt.trip.departure_city,
+            arrival_city: gt.trip.arrival_city,
+            departure_time: gt.actual_departure_time,
+            bus_name: gt.bus?.registration_number ?? null,
+            bus_plate_number: gt.bus?.registration_number ?? null,
+            available_seats: gt.available_seats,
+            total_seats: gt.bus?.capacity ?? null,
+            status: gt.status,
+            // `CONCAT(s.first_name, ' ', s.last_name)` — Postgres CONCAT
+            // treats NULL arguments as empty strings rather than
+            // propagating NULL, so a trip with no driver assigned yields
+            // a single space, not null/undefined. Reproduced exactly.
+            driver_name: `${gt.staff_generated_trip_driver_idTostaff?.first_name ?? ''} ${gt.staff_generated_trip_driver_idTostaff?.last_name ?? ''}`,
+        })) as unknown as UpcomingTrip[];
     }
 
     /**
      * Get recent bookings
      */
     private static async getRecentBookings(agencyId: number | undefined, limit: number): Promise<RecentBooking[]> {
-        const agencyFilter = agencyId ? `AND ag.id = $2` : '';
-        const params = agencyId ? [limit, agencyId] : [limit];
+        const rows = await prismaDb.booking.findMany({
+            where: {
+                is_deleted: false,
+                ...(agencyId ? { generated_trip: { trip: { agency_id: agencyId } } } : {}),
+            },
+            select: {
+                id: true, booking_reference: true, total_price: true, payment_method: true,
+                payment_status: true, status: true, booking_date: true,
+                customer_booking_customer_idTocustomer: { select: { first_name: true, last_name: true, phone: true } },
+                generated_trip: { select: { actual_departure_time: true, trip: { select: { departure_city: true, arrival_city: true } } } },
+            },
+            orderBy: { booking_date: 'desc' },
+            take: limit,
+        });
 
-        const bookings = await pgAny(`
-            SELECT
-                b.id,
-                b.booking_reference,
-                CONCAT(c.first_name, ' ', c.last_name) as customer_name,
-                c.phone as customer_phone,
-                CONCAT(t.departure_city, ' → ', t.arrival_city) as trip_route,
-                gt.actual_departure_time as departure_time,
-                b.total_price,
-                b.payment_method,
-                b.payment_status,
-                b.status,
-                b.booking_date
-            FROM booking b
-            LEFT JOIN customer c ON b.customer_id = c.id
-            LEFT JOIN generated_trip gt ON b.generated_trip_id = gt.id
-            LEFT JOIN trip t ON gt.trip_id = t.id
-            LEFT JOIN agency ag ON t.agency_id = ag.id
-            WHERE b.is_deleted = false
-            ${agencyFilter}
-            ORDER BY b.booking_date DESC
-            LIMIT $1
-        `, params);
-
-        return bookings.map(booking => ({
-            id: booking.id,
-            booking_reference: booking.booking_reference,
-            customer_name: booking.customer_name,
-            customer_phone: booking.customer_phone,
-            trip_route: booking.trip_route,
-            departure_time: booking.departure_time,
-            total_price: parseFloat(booking.total_price),
-            payment_method: booking.payment_method,
-            payment_status: booking.payment_status,
-            status: booking.status,
-            booking_date: booking.booking_date
-        }));
+        return rows.map((b) => {
+            const customer = b.customer_booking_customer_idTocustomer;
+            const trip = b.generated_trip?.trip;
+            return {
+                id: b.id,
+                booking_reference: b.booking_reference,
+                // Same NULL-tolerant CONCAT reproduction as driver_name above.
+                customer_name: `${customer?.first_name ?? ''} ${customer?.last_name ?? ''}`,
+                customer_phone: customer?.phone ?? null,
+                trip_route: trip ? `${trip.departure_city} → ${trip.arrival_city}` : ' → ',
+                departure_time: b.generated_trip?.actual_departure_time ?? null,
+                total_price: b.total_price,
+                payment_method: b.payment_method,
+                payment_status: b.payment_status,
+                status: b.status,
+                booking_date: b.booking_date,
+            } as unknown as RecentBooking;
+        });
     }
 }

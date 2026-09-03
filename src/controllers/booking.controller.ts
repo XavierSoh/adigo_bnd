@@ -2,10 +2,11 @@ import { Request, Response } from "express";
 import { BookingRepository } from "../repository/booking.repository";
 import { CustomerRepository } from "../repository/customer.repository";
 import { WalletRepository } from "../repository/wallet.repository";
+import { GeneratedTripRepository } from "../repository/generated-trip.repository";
+import { GeneratedTripSeatRepository } from "../repository/generated_trip_seat_repository";
 import { Booking } from "../models/booking.model";
 import { I18n } from "../utils/i18n";
 import { calculateTierDiscount } from "../config/tier.config";
-import { pgOneOrNone, pgAny, pgNone } from "../utils/prisma-compat";
 import { SocketService } from "../services/socket.service";
 import { PaymentService } from "../services/payment/payment.service";
 
@@ -170,24 +171,14 @@ export class BookingController {
             }
 
             // Fetch trip price from database (source of truth)
-            const tripPriceQuery = await pgOneOrNone(
-                `SELECT t.price
-                 FROM trip t
-                 JOIN generated_trip gt ON gt.trip_id = t.id
-                 WHERE gt.id = $1`,
-                [generated_trip_id]
-            );
+            const tripPriceResult = await GeneratedTripRepository.getTripPrice(generated_trip_id);
 
-            if (!tripPriceQuery || !tripPriceQuery.price) {
-                res.status(404).json({
-                    status: false,
-                    message: 'Trip not found or price not set',
-                    code: 404
-                });
+            if (!tripPriceResult.status) {
+                res.status(tripPriceResult.code).json(tripPriceResult);
                 return;
             }
 
-            const baseTripPrice = parseFloat(tripPriceQuery.price);
+            const baseTripPrice = Number((tripPriceResult.body as { price: unknown }).price);
             console.log(`💰 [BookingController] Trip base price from database: ${baseTripPrice} XAF`);
 
             // If payment method is wallet, check balance first before processing any bookings
@@ -1122,14 +1113,11 @@ export class BookingController {
             let bookingIds = [parseInt(booking_id)];
             if (booking.group_id) {
                 console.log(`📦 [BookingController] Cancelling group: ${booking.group_id}`);
-                const groupBookingsResult = await pgAny(
-                    `SELECT id, status FROM booking WHERE group_id = $1 AND is_deleted = false`,
-                    [booking.group_id]
-                );
+                const groupBookingsResult = await BookingRepository.findByGroupId(booking.group_id);
 
-                if (groupBookingsResult) {
+                if (groupBookingsResult.status && groupBookingsResult.body) {
                     // Only include bookings that can be cancelled
-                    bookingIds = groupBookingsResult
+                    bookingIds = (groupBookingsResult.body as any[])
                         .filter((b: any) => {
                             const s = b.status.toLowerCase();
                             return s === 'confirmed' || s === 'pending';
@@ -1213,15 +1201,10 @@ export class BookingController {
             }
 
             // Check if departure time is at least 2 hours in the future
-            const departureTimeResult = await pgOneOrNone(
-                `SELECT actual_departure_time
-                 FROM generated_trip
-                 WHERE id = $1`,
-                [booking.generated_trip_id]
-            );
+            const generatedTripResult = await GeneratedTripRepository.findById(booking.generated_trip_id);
 
-            if (departureTimeResult) {
-                const departureTime = new Date(departureTimeResult.actual_departure_time);
+            if (generatedTripResult.status && generatedTripResult.body) {
+                const departureTime = new Date((generatedTripResult.body as any).actual_departure_time);
                 const now = new Date();
                 const hoursUntilDeparture = (departureTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
@@ -1236,12 +1219,7 @@ export class BookingController {
             }
 
             // Check if new seat is available
-            const seatCheck = await pgOneOrNone(
-                `SELECT id, status
-                 FROM generated_trip_seat
-                 WHERE id = $1 AND generated_trip_id = $2`,
-                [new_seat_id, booking.generated_trip_id]
-            );
+            const seatCheck = await GeneratedTripSeatRepository.findRawStatus(new_seat_id, booking.generated_trip_id);
 
             if (!seatCheck) {
                 res.status(404).json({
@@ -1262,29 +1240,15 @@ export class BookingController {
             }
 
             // Update booking with new seat
-            await pgNone(
-                `UPDATE booking
-                 SET generated_trip_seat_id = $1,
-                     updated_at = NOW()
-                 WHERE id = $2`,
-                [new_seat_id, booking_id]
-            );
+            await BookingRepository.update(parseInt(booking_id), {
+                generated_trip_seat_id: new_seat_id,
+            } as Partial<Booking>);
 
             // Mark old seat as available
-            await pgNone(
-                `UPDATE generated_trip_seat
-                 SET status = 'available'
-                 WHERE id = $1`,
-                [booking.generated_trip_seat_id]
-            );
+            await GeneratedTripSeatRepository.setStatus(booking.generated_trip_seat_id, 'available');
 
             // Mark new seat as reserved
-            await pgNone(
-                `UPDATE generated_trip_seat
-                 SET status = 'reserved'
-                 WHERE id = $1`,
-                [new_seat_id]
-            );
+            await GeneratedTripSeatRepository.setStatus(new_seat_id, 'reserved');
 
             // Get updated booking
             const updatedBooking = await BookingRepository.findById(parseInt(booking_id));

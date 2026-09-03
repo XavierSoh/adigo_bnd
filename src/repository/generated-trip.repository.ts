@@ -380,6 +380,29 @@ export class GeneratedTripRepository {
         }
     }
 
+    // Get the underlying trip's price for a generated trip — new method,
+    // needed by booking.controller.ts's createMultiple() flow, which
+    // previously did this itself via a raw
+    // `SELECT t.price FROM trip t JOIN generated_trip gt ON gt.trip_id =
+    // t.id WHERE gt.id = $1` inline in the controller (no repository
+    // method existed for it at all before this conversion).
+    static async getTripPrice(generatedTripId: number): Promise<ResponseModel> {
+        try {
+            const gt = await prismaDb.generated_trip.findUnique({
+                where: { id: generatedTripId },
+                select: { trip: { select: { price: true } } },
+            });
+
+            if (!gt || gt.trip.price == null) {
+                return { status: false, message: "Trip not found or price not set", code: 404 };
+            }
+
+            return { status: true, message: "Prix du trajet récupéré", body: { price: gt.trip.price }, code: 200 };
+        } catch (error) {
+            return { status: false, message: "Erreur lors de la récupération du prix", code: 500 };
+        }
+    }
+
     // Get available cities (unique departure and arrival cities from trips)
     static async getAvailableCities(): Promise<ResponseModel> {
         try {
