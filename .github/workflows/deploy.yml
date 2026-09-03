@@ -32,7 +32,9 @@ jobs:
             node dist/src/migrations/run_all_event_migrations.js || true
             node dist/src/migrations/ticketing/run_migration.js || true
             node dist/src/config/migrate_event_columns.js || true
-            DATABASE_URL=$(grep '^DATABASE_URL=' .env | cut -d= -f2-)
+            # psql (libpq) doesn't understand Prisma-only URI query params
+            # like ?schema=public - strip everything from the first '?' on.
+            DATABASE_URL=$(grep '^DATABASE_URL=' .env | cut -d= -f2- | cut -d'?' -f1)
             psql "$DATABASE_URL" -f migrations/add_created_by_to_event.sql || true
             psql "$DATABASE_URL" -f migrations/ticketing_admin_surface_rebuild.sql || true
             pm2 restart adigo-api || pm2 start ecosystem.config.js
