@@ -89,6 +89,26 @@ export class TicketTypeRepository {
         });
     }
 
+    // Pure read check, no payment side effects - called from
+    // TicketController.purchase before any money moves or any ticket row
+    // is created, same spirit as BookingRepository's seat-availability
+    // check being called from the controller rather than baked into create().
+    static async validateAvailability(ticketTypeId: number, quantity: number): Promise<ResponseModel> {
+        const typeRes = await this.findById(ticketTypeId);
+        if (!typeRes.status) return typeRes;
+
+        const ticketType = typeRes.body as { quantity: number; sold: number | null; max_per_order: number };
+        const available = ticketType.quantity - (ticketType.sold ?? 0);
+
+        if (available < quantity) {
+            return { status: false, message: `Seulement ${available} tickets disponibles`, code: 400 };
+        }
+        if (quantity > ticketType.max_per_order) {
+            return { status: false, message: `Maximum ${ticketType.max_per_order} tickets par commande`, code: 400 };
+        }
+        return typeRes;
+    }
+
     static async delete(id: number): Promise<ResponseModel> {
         try {
             await prismaDb.event_ticket_type.delete({ where: { id } });

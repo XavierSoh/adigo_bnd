@@ -112,6 +112,46 @@ export function passwordResetEmail(lang: Language, params: { firstName: string; 
     };
 }
 
+export function ticketPurchaseConfirmedEmail(lang: Language, params: {
+    firstName: string; eventTitle: string; quantity: number; totalPrice: number; reference: string;
+}): EmailContent {
+    const { firstName, eventTitle, quantity, totalPrice, reference } = params;
+
+    if (lang === 'en') {
+        return {
+            subject: 'Your ADIGO ticket is confirmed',
+            text: `Hi ${firstName},\n\nYour purchase is confirmed: ${quantity} ticket(s) for ${eventTitle}.\nTotal paid: ${totalPrice} XAF\nReference: ${reference}\n\nSee you there!\n\n- The ADIGO team`,
+            html: layout(lang, 'Ticket confirmed! 🎟️', `
+                <p>Hi ${firstName}, your purchase is confirmed:</p>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f0f5;border-radius:8px;margin:20px 0;">
+                  <tr><td style="padding:16px 20px;">
+                    <p style="margin:0 0 6px;font-weight:bold;color:#222;">${eventTitle}</p>
+                    <p style="margin:0;color:#555;">${quantity} ticket(s) — ${totalPrice} XAF</p>
+                    <p style="margin:8px 0 0;color:#999;font-size:13px;">Reference: ${reference}</p>
+                  </td></tr>
+                </table>
+                <p style="color:#777;font-size:13px;">Keep this email as your receipt. See you there!</p>
+            `, "You're receiving this email because a ticket was purchased on this ADIGO account."),
+        };
+    }
+
+    return {
+        subject: 'Votre billet ADIGO est confirmé',
+        text: `Bonjour ${firstName},\n\nVotre achat est confirmé : ${quantity} billet(s) pour ${eventTitle}.\nTotal payé : ${totalPrice} XAF\nRéférence : ${reference}\n\nÀ bientôt !\n\n- L'équipe ADIGO`,
+        html: layout(lang, 'Billet confirmé ! 🎟️', `
+            <p>Bonjour ${firstName}, votre achat est confirmé :</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f0f5;border-radius:8px;margin:20px 0;">
+              <tr><td style="padding:16px 20px;">
+                <p style="margin:0 0 6px;font-weight:bold;color:#222;">${eventTitle}</p>
+                <p style="margin:0;color:#555;">${quantity} billet(s) — ${totalPrice} XAF</p>
+                <p style="margin:8px 0 0;color:#999;font-size:13px;">Référence : ${reference}</p>
+              </td></tr>
+            </table>
+            <p style="color:#777;font-size:13px;">Conservez cet email comme reçu. À bientôt !</p>
+        `, "Vous recevez cet email car un billet a été acheté sur ce compte ADIGO."),
+    };
+}
+
 export function verificationResultPage(lang: Language, ok: boolean): string {
     const title = ok
         ? (lang === 'en' ? 'Email confirmed!' : 'Email confirmé !')

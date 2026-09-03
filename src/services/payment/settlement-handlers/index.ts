@@ -1,15 +1,13 @@
 // Imported once (for side effects) from app.ts so every module's Orange
 // Money settlement handler is registered before any request can arrive.
 //
-// The 'ticket_purchase' handler that used to be registered here
-// (../../../ticketing/services/ticket-purchase-settlement) was removed
-// during the pg-promise→Prisma cleanup: it depended on
-// EventTicketPurchaseRepository from the ticketing "rich module", whose
-// only producer (EventTicketPurchaseController.purchase(), on the
-// unmounted rich-module router) has been dead code with zero live routes
-// since before this session — confirmed via a repo-wide grep that no live
-// code path ever creates a payment_transaction with
-// purpose='ticket_purchase', so the handler could never actually fire.
-// See BOOKING_MODULE_NOTES.md.
+// A 'ticket_purchase' handler existed here before, wired to the dead
+// ticketing "rich module" (EventTicketPurchaseRepository) whose only
+// producer had zero live routes — removed during the pg-promise→Prisma
+// cleanup (see BOOKING_MODULE_NOTES.md). ticket.settlement.ts below is a
+// fresh handler wired to the live src/repository/ticketing/ticket.repository.ts,
+// added when real wallet/Orange Money payment processing was built for
+// ticket purchases (see the ticketing payment plan).
 import "./wallet.settlement";
 import "./booking.settlement";
+import "./ticket.settlement";

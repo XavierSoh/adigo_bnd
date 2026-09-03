@@ -65,8 +65,12 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction):
         // Verify token
         const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
 
-        // Attach user info to request
-        req.userId = decoded.id;
+        // Attach user info to request. Staff/admin tokens carry `id`,
+        // customer tokens carry `customerId` (see customer.repository.ts) —
+        // normalize both onto req.userId, same fallback optionalAuthMiddleware
+        // below already used correctly (this one didn't, so req.userId was
+        // always undefined for real customer tokens until now).
+        req.userId = decoded.id ?? decoded.customerId;
         req.userEmail = decoded.email;
         req.userRole = decoded.role;
 

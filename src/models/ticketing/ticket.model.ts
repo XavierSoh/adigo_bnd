@@ -1,7 +1,10 @@
 import { Event } from "./event.model";
 import { EventTicketType } from "./ticket-type.model";
 
-export type PaymentMethod = 'mtn' | 'orange' | 'wallet' | 'cash';
+// 'orangeMoney' (not 'orange') to match booking's convention and the
+// payment-provider registry's naming — see EMAIL_NOTIFICATIONS_PLAN.md /
+// the ticketing payment plan for why this was normalized.
+export type PaymentMethod = 'mtn' | 'orangeMoney' | 'wallet' | 'cash';
 export type PaymentStatus = 'pending' | 'paid' | 'refunded' | 'failed';
 export type TicketStatus = 'pending' | 'confirmed' | 'used' | 'cancelled' | 'expired';
 
@@ -32,6 +35,10 @@ export interface TicketPurchaseDto {
     customer_id: number;
     quantity: number;
     payment_method: PaymentMethod;
+    // Required only for payment_method:'orangeMoney' - no fallback to a
+    // saved customer number (see CustomerRepository.findById's select list,
+    // which doesn't expose one - same dead path found in booking).
+    subscriber_msisdn?: string;
 }
 
 export interface TicketPaymentDto {

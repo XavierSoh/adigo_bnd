@@ -8,6 +8,8 @@ import {
     ReviewController
 } from "../../controllers/ticketing";
 import adminTicketingRouter, { organizerDashboardRouter } from "../../ticketing/routes/admin.router";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { adminRoleMiddleware } from "../../middleware/admin-role.middleware";
 
 const ticketingRouter = Router();
 
@@ -54,14 +56,14 @@ ticketingRouter.delete("/events/:id/ticket-types/:typeId", EventController.delet
 // ============================================
 // TICKETS
 // ============================================
-ticketingRouter.get("/tickets/customer/:customerId", TicketController.getMyTickets);
-ticketingRouter.get("/tickets/:id", TicketController.getById);
-ticketingRouter.get("/tickets/ref/:reference", TicketController.getByReference);
-ticketingRouter.post("/tickets/purchase", TicketController.purchase);
-ticketingRouter.patch("/tickets/:id/payment", TicketController.confirmPayment);
-ticketingRouter.patch("/tickets/:id/validate", TicketController.validate);
-ticketingRouter.post("/tickets/validate-qr", TicketController.validateByQr);
-ticketingRouter.patch("/tickets/:id/cancel", TicketController.cancel);
+ticketingRouter.get("/tickets/customer/:customerId", authMiddleware, TicketController.getMyTickets);
+ticketingRouter.get("/tickets/:id", authMiddleware, TicketController.getById);
+ticketingRouter.get("/tickets/ref/:reference", authMiddleware, TicketController.getByReference);
+ticketingRouter.post("/tickets/purchase", authMiddleware, TicketController.purchase);
+ticketingRouter.patch("/tickets/:id/payment", authMiddleware, adminRoleMiddleware, TicketController.confirmPayment);
+ticketingRouter.patch("/tickets/:id/validate", authMiddleware, adminRoleMiddleware, TicketController.validate);
+ticketingRouter.post("/tickets/validate-qr", authMiddleware, adminRoleMiddleware, TicketController.validateByQr);
+ticketingRouter.patch("/tickets/:id/cancel", authMiddleware, TicketController.cancel);
 
 // ============================================
 // FAVORITES

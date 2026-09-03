@@ -56,31 +56,46 @@ export class TicketRepository {
         }
     }
 
-    static async purchase(data: TicketPurchaseDto): Promise<ResponseModel> {
+    // Deliberately separate from findById/withJoins - a `select` naming
+    // exactly the fields needed, not a blanket `include: {customer: true}`
+    // on the shared, API-response-facing withJoins (which would leak the
+    // customer's password hash and every other column to any caller of
+    // GET /tickets/:id or /tickets/ref/:reference).
+    static async findForEmail(id: number) {
+        return prismaDb.event_ticket.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                reference: true,
+                quantity: true,
+                total_price: true,
+                event: { select: { title: true } },
+                customer: { select: { email: true, first_name: true, preferred_language: true } },
+            },
+        });
+    }
+
+    // Plain DB write - all payment orchestration (balance checks,
+    // WalletRepository.recordPayment, PaymentService.initiate) lives in
+    // TicketController.purchase, mirroring booking's controller/repository
+    // split. Callers pass the already-validated price and initial
+    // status/payment_status for the chosen payment method.
+    static async createPending(
+        data: TicketPurchaseDto,
+        unitPrice: number,
+        totalPrice: number,
+        status: 'pending' | 'confirmed',
+        paymentStatus: 'pending'
+    ): Promise<ResponseModel> {
         try {
-            // Get ticket type info
-            const typeRes = await TicketTypeRepository.findById(data.ticket_type_id);
-            if (!typeRes.status) return typeRes;
-
-            const ticketType = typeRes.body as any;
-            const available = ticketType.quantity - ticketType.sold;
-
-            // Check availability
-            if (available < data.quantity) {
-                return { status: false, message: `Seulement ${available} tickets disponibles`, code: 400 };
-            }
-
-            // Check max per order
-            if (data.quantity > ticketType.max_per_order) {
-                return { status: false, message: `Maximum ${ticketType.max_per_order} tickets par commande`, code: 400 };
-            }
-
-            const unitPrice = ticketType.price;
-            const totalPrice = unitPrice * data.quantity;
+            // Same style as booking.repository.ts's generateBookingReference()
+            // (no collision retry there either, don't add one here).
+            const reference = `TK${Math.floor(Math.random() * 999999).toString().padStart(6, '0')}`;
             const qrCode = uuidv4();
 
             const result = await prismaDb.event_ticket.create({
                 data: {
+                    reference,
                     event_id: data.event_id,
                     ticket_type_id: data.ticket_type_id,
                     customer_id: data.customer_id,
@@ -88,6 +103,8 @@ export class TicketRepository {
                     unit_price: unitPrice,
                     total_price: totalPrice,
                     payment_method: data.payment_method,
+                    payment_status: paymentStatus,
+                    status,
                     qr_code: qrCode,
                 } as Prisma.event_ticketUncheckedCreateInput,
             });
@@ -99,29 +116,72 @@ export class TicketRepository {
         }
     }
 
+    // Unwinds a ticket whose Orange Money payment failed to even initiate
+    // (row was created 'pending') - mirrors booking's cancelBatch/status-based
+    // undo for the Orange Money path.
+    static async markCancelled(id: number): Promise<void> {
+        await prismaDb.event_ticket.updateMany({
+            where: { id, status: 'pending' },
+            data: { status: 'cancelled' },
+        });
+    }
+
+    // Marks a wallet-paid ticket as actually paid, once WalletRepository.recordPayment
+    // has succeeded (createPending alone only gets it to status:'confirmed',
+    // payment_status:'pending' - the debit is a separate step in the controller).
+    static async markWalletPaid(id: number, paymentRef: string): Promise<void> {
+        await prismaDb.event_ticket.update({
+            where: { id },
+            data: { payment_status: 'paid', payment_ref: paymentRef },
+        });
+    }
+
+    // Unwinds a ticket whose wallet debit failed after the row was already
+    // created 'confirmed' - mirrors BookingRepository.softDelete used in
+    // BookingController.create's wallet-failure path.
+    static async softDeleteFailed(id: number): Promise<void> {
+        await prismaDb.event_ticket.updateMany({
+            where: { id },
+            data: { is_deleted: true, deleted_at: new Date() },
+        });
+    }
+
+    // Cash-only now: wallet/orangeMoney tickets settle automatically via
+    // WalletRepository.recordPayment (synchronous) or the 'ticket_purchase'
+    // settlement handler (Orange Money webhook) - this endpoint used to
+    // trust whatever payment_status the client sent, confirming any ticket
+    // for free regardless of payment_method (a real, live exploit, fixed
+    // here rather than reproduced).
     static async confirmPayment(id: number, paymentData: TicketPaymentDto): Promise<ResponseModel> {
         try {
-            // `status = CASE WHEN $2 = 'paid' THEN 'confirmed' ELSE status
-            // END` — decided in JS instead: only touch `status` when the
-            // new payment_status is 'paid', otherwise leave it alone
-            // exactly like the ELSE branch did.
-            const data: Prisma.event_ticketUpdateInput = {
-                payment_ref: paymentData.payment_ref,
-                payment_status: paymentData.payment_status,
-            };
-            if (paymentData.payment_status === 'paid') data.status = 'confirmed';
+            const ticket = await prismaDb.event_ticket.findUnique({ where: { id } });
+            if (!ticket) return { status: false, message: "Ticket non trouvé", code: 404 };
 
-            const updateResult = await prismaDb.event_ticket.updateMany({ where: { id }, data });
-            if (updateResult.count === 0) return { status: false, message: "Ticket non trouvé", code: 404 };
-
-            const result = await prismaDb.event_ticket.findUnique({ where: { id } });
-
-            // If paid, update sold count
-            if (paymentData.payment_status === 'paid' && result) {
-                await TicketTypeRepository.incrementSold(result.ticket_type_id, result.quantity);
+            if (ticket.payment_method !== 'cash') {
+                return {
+                    status: false,
+                    message: ticket.payment_method === 'wallet'
+                        ? "Ce ticket est payé par portefeuille : il est confirmé automatiquement, pas via cet endpoint."
+                        : "Ce ticket est payé via Orange Money : il est confirmé automatiquement une fois le paiement validé, pas via cet endpoint.",
+                    code: 400,
+                };
+            }
+            if (ticket.payment_status === 'paid') {
+                return { status: false, message: "Ticket déjà payé", code: 400 };
             }
 
-            return { status: true, message: "Paiement confirmé", body: result, code: 200 };
+            const result = await prismaDb.event_ticket.update({
+                where: { id },
+                data: {
+                    payment_ref: paymentData.payment_ref || 'cash',
+                    payment_status: 'paid',
+                    status: 'confirmed',
+                },
+            });
+
+            await TicketTypeRepository.incrementSold(result.ticket_type_id, result.quantity);
+
+            return { status: true, message: "Paiement en espèces confirmé", body: result, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la confirmation", code: 500 };
         }
