@@ -3,7 +3,7 @@
  * Business logic for parcel shipment management
  */
 
-import pool from '../../config/database';
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgTransaction } from '../../utils/prisma-compat';
 import {
   ParcelShipment,
   CreateShipmentDto,
@@ -81,15 +81,10 @@ export class ShipmentService {
    * Create a new shipment
    */
   async createShipment(data: CreateShipmentDto): Promise<ParcelShipment> {
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return await pgTransaction(async (tx) => {
       // Generate tracking number
-      const trackingQuery = 'SELECT generate_tracking_number() as tracking_number';
-      const trackingResult = await client.query(trackingQuery);
-      const trackingNumber = trackingResult.rows[0].tracking_number;
+      const trackingResult = await pgOne('SELECT generate_tracking_number() as tracking_number', [], tx);
+      const trackingNumber = trackingResult.tracking_number;
 
       // Estimate cost if coordinates provided
       let estimate;
@@ -139,7 +134,7 @@ export class ShipmentService {
         data.paymentMethod, 'pending'
       ];
 
-      const result = await client.query(query, values);
+      const result = await pgOne(query, values, tx);
 
       // Create initial tracking event
       const eventQuery = `
@@ -147,22 +142,15 @@ export class ShipmentService {
         VALUES ($1, $2, $3, $4)
       `;
 
-      await client.query(eventQuery, [
-        result.rows[0].id,
+      await pgNone(eventQuery, [
+        result.id,
         'created',
         'Shipment created and awaiting pickup',
         data.senderAddress
-      ]);
+      ], tx);
 
-      await client.query('COMMIT');
-      return result.rows[0];
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      // Connection is managed by pg-promise
-    }
+      return result;
+    });
   }
 
   /**
@@ -170,8 +158,7 @@ export class ShipmentService {
    */
   async getShipmentById(shipmentId: number): Promise<ParcelShipment | null> {
     const query = 'SELECT * FROM parcel_shipments WHERE id = $1';
-    const result = await pool.query(query, [shipmentId]);
-    return result.rows[0] || null;
+    return await pgOneOrNone(query, [shipmentId]);
   }
 
   /**
@@ -179,8 +166,7 @@ export class ShipmentService {
    */
   async trackByNumber(trackingNumber: string): Promise<ParcelShipment | null> {
     const query = 'SELECT * FROM parcel_shipments WHERE tracking_number = $1';
-    const result = await pool.query(query, [trackingNumber]);
-    return result.rows[0] || null;
+    return await pgOneOrNone(query, [trackingNumber]);
   }
 
   /**
@@ -192,8 +178,7 @@ export class ShipmentService {
       WHERE customer_id = $1
       ORDER BY created_at DESC
     `;
-    const result = await pool.query(query, [customerId]);
-    return result.rows;
+    return await pgAny(query, [customerId]);
   }
 }
 

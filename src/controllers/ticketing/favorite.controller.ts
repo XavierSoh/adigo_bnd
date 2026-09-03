@@ -1,39 +1,44 @@
 import { Request, Response } from "express";
-import { FavoriteRepository } from "../../repository/ticketing";
+import { FavoriteRepository } from "../../repository/ticketing/favorite.repository";
 
 export class FavoriteController {
 
     static async getMyFavorites(req: Request, res: Response) {
-        const customerId = parseInt((req.params as { customerId: string }).customerId);
-        const result = await FavoriteRepository.findByCustomerId(customerId);
-        res.status(result.code).json(result);
-    }
-
-    static async add(req: Request, res: Response) {
-        const customerId = parseInt(req.body.customer_id);
-        const eventId = parseInt((req.params as { eventId: string }).eventId);
-        const result = await FavoriteRepository.add(customerId, eventId);
-        res.status(result.code).json(result);
-    }
-
-    static async remove(req: Request, res: Response) {
-        const customerId = parseInt(req.body.customer_id);
-        const eventId = parseInt((req.params as { eventId: string }).eventId);
-        const result = await FavoriteRepository.remove(customerId, eventId);
-        res.status(result.code).json(result);
-    }
-
-    static async toggle(req: Request, res: Response) {
-        const customerId = parseInt(req.body.customer_id);
-        const eventId = parseInt((req.params as { eventId: string }).eventId);
-        const result = await FavoriteRepository.toggle(customerId, eventId);
-        res.status(result.code).json(result);
+        const { customerId } = req.params as { customerId: string };
+        const response = await FavoriteRepository.findByCustomerId(parseInt(customerId));
+        res.status(response.code).json(response);
     }
 
     static async check(req: Request, res: Response) {
-        const customerId = parseInt(req.query.customer_id as string);
-        const eventId = parseInt((req.params as { eventId: string }).eventId);
-        const isFavorite = await FavoriteRepository.isFavorite(customerId, eventId);
-        res.json({ status: true, body: { is_favorite: isFavorite }, code: 200 });
+        const { eventId } = req.params as { eventId: string };
+        const { customerId } = req.query as { customerId?: string };
+
+        if (!customerId) {
+            return res.status(400).json({ status: false, message: "customerId requis", code: 400 });
+        }
+
+        const isFavorite = await FavoriteRepository.isFavorite(parseInt(customerId), parseInt(eventId));
+        res.status(200).json({ status: true, message: "Statut favori récupéré", body: { is_favorited: isFavorite }, code: 200 });
+    }
+
+    static async add(req: Request, res: Response) {
+        const { eventId } = req.params as { eventId: string };
+        const { customer_id } = req.body as { customer_id: number };
+        const response = await FavoriteRepository.add(customer_id, parseInt(eventId));
+        res.status(response.code).json(response);
+    }
+
+    static async remove(req: Request, res: Response) {
+        const { eventId } = req.params as { eventId: string };
+        const customerId = (req.body?.customer_id ?? req.query.customerId) as string | number;
+        const response = await FavoriteRepository.remove(parseInt(customerId as string), parseInt(eventId));
+        res.status(response.code).json(response);
+    }
+
+    static async toggle(req: Request, res: Response) {
+        const { eventId } = req.params as { eventId: string };
+        const { customer_id } = req.body as { customer_id: number };
+        const response = await FavoriteRepository.toggle(customer_id, parseInt(eventId));
+        res.status(response.code).json(response);
     }
 }

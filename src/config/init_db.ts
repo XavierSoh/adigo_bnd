@@ -4,6 +4,8 @@ import createChatTables, { createChatDatabaseIfNotExists } from "./chat_tables";
 import { migrateCustomerTable } from "./migrate_customer_table";
 import { migrateBookingPaymentMethod } from "./migrate_booking_payment_method";
 import { migrateBookingCreatedBy } from "./migrate_booking_created_by";
+import { migrateAccessRights } from "./migrate_access_rights";
+import { migrateVtcDriverDocuments } from "./migrate_vtc_driver_documents";
 
 export const initDb = async () =>  {
     // Créer la base de données si elle n'existe pas
@@ -18,6 +20,8 @@ export const initDb = async () =>  {
     await migrateCustomerTable();
     await migrateBookingPaymentMethod();
     await migrateBookingCreatedBy();
+    await migrateAccessRights();
+    await migrateVtcDriverDocuments();
 
     // Initialiser les données par défaut
     await initFirtsItems();

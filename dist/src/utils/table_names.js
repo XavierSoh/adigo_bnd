@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.kEventReview = exports.kEventFavorite = exports.kEventTicket = exports.kEventTicketType = exports.kEvent = exports.kEventOrganizer = exports.kEventCategory = exports.kCustomer = exports.kRecurrencePattern = exports.kSeat = exports.kBooking = exports.kTripGenerationLog = exports.kGeneratedTripSeat = exports.kGeneratedTrip = exports.kTrip = exports.kBus = exports.kAgency = exports.kProfileAccessRights = exports.kAccessRight = exports.kProfile = exports.kContractType = exports.kStaff = exports.kAuthenticationLog = exports.kSchools = exports.kUsers = void 0;
+exports.kEventReview = exports.kEventFavorite = exports.kEventTicket = exports.kEventTicketType = exports.kEvent = exports.kEventOrganizer = exports.kEventCategory = exports.kPaymentTransaction = exports.kCustomer = exports.kRecurrencePattern = exports.kSeat = exports.kBooking = exports.kTripGenerationLog = exports.kGeneratedTripSeat = exports.kGeneratedTrip = exports.kTrip = exports.kBus = exports.kAgency = exports.kProfileAccessRights = exports.kAccessRight = exports.kProfile = exports.kContractType = exports.kStaff = exports.kAuthenticationLog = exports.kSchools = exports.kUsers = void 0;
 exports.kUsers = 'users';
 exports.kSchools = 'schools';
 exports.kAuthenticationLog = 'authentication_log';
@@ -19,6 +19,7 @@ exports.kBooking = 'booking';
 exports.kSeat = 'seat';
 exports.kRecurrencePattern = "recurrence_pattern";
 exports.kCustomer = "customer";
+exports.kPaymentTransaction = 'payment_transaction';
 // Ticketing Module
 exports.kEventCategory = 'event_category';
 exports.kEventOrganizer = 'event_organizer';

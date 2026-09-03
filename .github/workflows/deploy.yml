@@ -16,9 +16,21 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            export PATH="/root/.nvm/versions/node/v22.11.0/bin:$PATH"
+            set -e
             cd /var/www/adigo
             rm -rf dist/
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             npm install
+            npx prisma generate
             npm run build
+            # One-off/idempotent schema migrations not wired into the app's
+            # own boot-time initDb() — safe to re-run every deploy.
+            node dist/src/migrations/run_all_event_migrations.js || true
+            node dist/src/migrations/ticketing/run_migration.js || true
+            node dist/src/config/migrate_event_columns.js || true
+            DATABASE_URL=$(grep '^DATABASE_URL=' .env | cut -d= -f2-)
+            psql "$DATABASE_URL" -f migrations/add_created_by_to_event.sql || true
+            psql "$DATABASE_URL" -f migrations/ticketing_admin_surface_rebuild.sql || true
             pm2 restart adigo-api || pm2 start ecosystem.config.js

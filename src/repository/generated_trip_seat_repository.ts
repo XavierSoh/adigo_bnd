@@ -1,9 +1,11 @@
 // ============================================
 // REPOSITORY - generated-trip-seat.repository.ts
 // ============================================
-import pgpDb from "../config/pgdb"; 
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny } from "../utils/prisma-compat";
 import ResponseModel from "../models/response.model";
-import { kBus, kGeneratedTrip, kGeneratedTripSeat, kSeat } from "../utils/table_names";
+import { kBooking, kBus, kGeneratedTrip, kGeneratedTripSeat, kSeat } from "../utils/table_names";
 
 export class GeneratedTripSeatRepository {
     // Constantes pour les sélections réutilisables
@@ -37,11 +39,25 @@ export class GeneratedTripSeatRepository {
         ) AS bus
     `;
 
+    // gts.status is only ever hand-written (blocked/maintenance seats) —
+    // nothing updates it when a booking is created or cancelled, so it
+    // silently goes stale the moment a real booking happens. The `booking`
+    // table is the actual source of truth (BookingRepository.checkSeatAvailability
+    // already queries it, not this column) — derive the seat's live status
+    // from it here instead of trusting gts.status for available/reserved/booked.
+    private static readonly LIVE_STATUS = `
+        CASE
+            WHEN bk.status = 'confirmed' THEN 'booked'
+            WHEN bk.status = 'pending' THEN 'reserved'
+            ELSE gts.status
+        END AS status
+    `;
+
     private static readonly BASE_SELECT = `
         gts.id,
         gts.generated_trip_id,
         gts.seat_id,
-        gts.status,
+        ${GeneratedTripSeatRepository.LIVE_STATUS},
         gts.price_adjustment::int AS price_adjustment,
         gts.blocked_reason,
         gts.blocked_until,
@@ -53,12 +69,16 @@ export class GeneratedTripSeatRepository {
     private static readonly BASE_JOINS = `
         FROM ${kGeneratedTripSeat} gts
         LEFT JOIN ${kSeat} s ON gts.seat_id = s.id
+        LEFT JOIN ${kBooking} bk ON bk.generated_trip_id = gts.generated_trip_id
+            AND bk.generated_trip_seat_id = gts.id
+            AND bk.status IN ('confirmed', 'pending')
+            AND bk.is_deleted = FALSE
     `;
 
     // Find seat by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const seat = await pgpDb.oneOrNone(
+            const seat = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                  ${this.BASE_JOINS}
                  WHERE gts.id = $1`,
@@ -78,7 +98,7 @@ export class GeneratedTripSeatRepository {
     // Find all seats for a generated trip
     static async findByGeneratedTrip(generatedTripId: number): Promise<ResponseModel> {
         try {
-            const seats = await pgpDb.any(
+            const seats = await pgAny(
                 `SELECT ${this.BASE_SELECT},
                         ${this.BUS_SELECT}
                  ${this.BASE_JOINS}
@@ -96,16 +116,20 @@ export class GeneratedTripSeatRepository {
         }
     }
 
-    // Find by seat status (available, reserved, booked, blocked)
+    // Find by seat status (available, reserved, booked, blocked) — filters
+    // on the same live-derived status BASE_SELECT exposes, not the stale column.
     static async findByStatus(generatedTripId: number, status: string): Promise<ResponseModel> {
         try {
-            const seats = await pgpDb.any(
+            const seats = await pgAny(
                 `SELECT ${this.BASE_SELECT},
                         ${this.BUS_SELECT}
                  ${this.BASE_JOINS}
                  INNER JOIN ${kGeneratedTrip} gt ON gt.id = gts.generated_trip_id
                  LEFT JOIN ${kBus} bs ON bs.id = gt.bus_id
-                 WHERE gts.generated_trip_id = $1 AND gts.status = $2
+                 WHERE gts.generated_trip_id = $1
+                   AND (CASE WHEN bk.status = 'confirmed' THEN 'booked'
+                             WHEN bk.status = 'pending' THEN 'reserved'
+                             ELSE gts.status END) = $2
                  ORDER BY gts.id ASC`,
                 [generatedTripId, status]
             );
@@ -116,13 +140,19 @@ export class GeneratedTripSeatRepository {
         }
     }
 
-    // Count available seats
+    // Count available seats — a seat only counts as available if it isn't
+    // blocked/maintenance (gts.status) AND has no active (confirmed or
+    // pending) booking against it.
     static async countAvailable(generatedTripId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
-                `SELECT COUNT(*)::int as available_count 
+            const result = await pgOne(
+                `SELECT COUNT(*)::int as available_count
                  FROM ${kGeneratedTripSeat} gts
-                 WHERE gts.generated_trip_id = $1 AND gts.status = 'available'`,
+                 LEFT JOIN ${kBooking} bk ON bk.generated_trip_id = gts.generated_trip_id
+                     AND bk.generated_trip_seat_id = gts.id
+                     AND bk.status IN ('confirmed', 'pending')
+                     AND bk.is_deleted = FALSE
+                 WHERE gts.generated_trip_id = $1 AND gts.status = 'available' AND bk.id IS NULL`,
                 [generatedTripId]
             );
 
@@ -136,7 +166,7 @@ export class GeneratedTripSeatRepository {
     static async findWithDetails(generatedTripId: number): Promise<ResponseModel> {
         try {
             console.log(`Fetching details for generated trip ID: ${generatedTripId}`);
-            const seats = await pgpDb.any(
+            const seats = await pgAny(
                 `SELECT ${this.BASE_SELECT},
                         ${this.BUS_SELECT}
                  ${this.BASE_JOINS}
@@ -157,13 +187,13 @@ export class GeneratedTripSeatRepository {
     // Find available seats with details
     static async findAvailableWithDetails(generatedTripId: number): Promise<ResponseModel> {
         try {
-            const seats = await pgpDb.any(
+            const seats = await pgAny(
                 `SELECT ${this.BASE_SELECT},
                         ${this.BUS_SELECT}
                  ${this.BASE_JOINS}
                  INNER JOIN ${kGeneratedTrip} gt ON gt.id = gts.generated_trip_id
                  LEFT JOIN ${kBus} bs ON bs.id = gt.bus_id
-                 WHERE gts.generated_trip_id = $1 AND gts.status = 'available'
+                 WHERE gts.generated_trip_id = $1 AND gts.status = 'available' AND bk.id IS NULL
                  ORDER BY s.row_number, s.column_position`,
                 [generatedTripId]
             );
@@ -177,13 +207,13 @@ export class GeneratedTripSeatRepository {
     // Find booked seats with details
     static async findBookedWithDetails(generatedTripId: number): Promise<ResponseModel> {
         try {
-            const seats = await pgpDb.any(
+            const seats = await pgAny(
                 `SELECT ${this.BASE_SELECT},
                         ${this.BUS_SELECT}
                  ${this.BASE_JOINS}
                  INNER JOIN ${kGeneratedTrip} gt ON gt.id = gts.generated_trip_id
                  LEFT JOIN ${kBus} bs ON bs.id = gt.bus_id
-                 WHERE gts.generated_trip_id = $1 AND gts.status = 'booked'
+                 WHERE gts.generated_trip_id = $1 AND bk.status = 'confirmed'
                  ORDER BY s.row_number, s.column_position`,
                 [generatedTripId]
             );

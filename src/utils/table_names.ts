@@ -16,6 +16,7 @@ export const kBooking = 'booking';
 export const kSeat = 'seat';
 export const kRecurrencePattern = "recurrence_pattern";
 export const kCustomer ="customer";
+export const kPaymentTransaction = 'payment_transaction';
 
 // Ticketing Module
 export const kEventCategory = 'event_category';

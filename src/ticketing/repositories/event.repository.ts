@@ -1,4 +1,6 @@
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult, toPrismaTimestampParam } from "../../utils/prisma-compat";
 import { Event, EventCreateDto, EventUpdateDto, EventPublishDto, EventSearchParams } from "../models/event.model";
 import ResponseModel from "../../models/response.model";
 import { kEvent, kEventCategory, kEventOrganizer, kCustomer } from "../../utils/table_names";
@@ -34,7 +36,7 @@ export class EventRepository {
     // Create new event
  static async create(event: EventCreateDto, createdBy?: number): Promise<ResponseModel> {
     try {
-        const result = await pgpDb.one(
+        const result = await pgOne(
             `INSERT INTO ${kEvent} (
                 title, description, category_id, organizer_id,
                 event_date, event_end_date, registration_deadline,
@@ -109,7 +111,7 @@ export class EventRepository {
     // Find by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const event = await pgpDb.oneOrNone(
+            const event = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.id = $1 AND e.is_deleted = FALSE`,
@@ -129,7 +131,7 @@ export class EventRepository {
     // Find by event code
     static async findByEventCode(eventCode: string): Promise<ResponseModel> {
         try {
-            const event = await pgpDb.oneOrNone(
+            const event = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.event_code = $1 AND e.is_deleted = FALSE`,
@@ -151,7 +153,7 @@ export class EventRepository {
         try {
             const whereClause = includeDeleted ? '' : 'WHERE e.is_deleted = FALSE';
 
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 ${whereClause}
@@ -167,7 +169,7 @@ export class EventRepository {
     // Find by organizer
     static async findByOrganizer(organizerId: number): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.organizer_id = $1 AND e.is_deleted = FALSE
@@ -184,7 +186,7 @@ export class EventRepository {
     // Find by category
     static async findByCategory(categoryId: number): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.category_id = $1 AND e.status = 'published' AND e.is_deleted = FALSE
@@ -201,7 +203,7 @@ export class EventRepository {
     // Update event
     static async update(id: number, event: EventUpdateDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEvent} SET
                     title = COALESCE($1, title),
                     description = COALESCE($2, description),
@@ -272,7 +274,7 @@ export class EventRepository {
     // Publish event
     static async publish(id: number, publishData: EventPublishDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEvent} SET
                     status = 'pending_validation',
                     validation_status = 'pending',
@@ -315,7 +317,7 @@ export class EventRepository {
     // Approve event (admin)
     static async approve(id: number, validatedBy: number, validationNotes?: string): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEvent} SET
                     status = 'published',
                     validation_status = 'approved',
@@ -342,7 +344,7 @@ export class EventRepository {
     // Reject event (admin)
     static async reject(id: number, validatedBy: number, validationNotes: string): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEvent} SET
                     status = 'draft',
                     validation_status = 'rejected',
@@ -368,7 +370,7 @@ export class EventRepository {
     // Cancel event
     static async cancel(id: number, cancellationReason: string): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEvent} SET
                     status = 'cancelled',
                     cancellation_reason = $1,
@@ -435,13 +437,13 @@ export class EventRepository {
             // Date range
             if (params.startDate) {
                 query += ` AND e.event_date >= $${paramIndex}`;
-                queryParams.push(params.startDate);
+                queryParams.push(toPrismaTimestampParam(params.startDate));
                 paramIndex++;
             }
 
             if (params.endDate) {
                 query += ` AND e.event_date <= $${paramIndex}`;
-                queryParams.push(params.endDate);
+                queryParams.push(toPrismaTimestampParam(params.endDate));
                 paramIndex++;
             }
 
@@ -485,7 +487,7 @@ export class EventRepository {
             const offset = params.offset || 0;
             query += ` LIMIT ${limit} OFFSET ${offset}`;
 
-            const events = await pgpDb.any(query, queryParams);
+            const events = await pgAny(query, queryParams);
 
             return { status: true, message: "Recherche effectuée", body: events, code: 200 };
         } catch (error) {
@@ -497,7 +499,7 @@ export class EventRepository {
     // Get upcoming events
     static async getUpcoming(limit: number = 10): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.status = 'published' AND e.is_deleted = FALSE
@@ -517,7 +519,7 @@ export class EventRepository {
     // Get past events
     static async getPast(limit: number = 10): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.status IN ('completed', 'published') AND e.is_deleted = FALSE
@@ -536,7 +538,7 @@ export class EventRepository {
     // Get featured events
     static async getFeatured(limit: number = 5): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.status = 'published' AND e.is_deleted = FALSE
@@ -556,7 +558,7 @@ export class EventRepository {
     // Get popular events (most tickets sold)
     static async getPopular(limit: number = 10): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE e.status = 'published' AND e.is_deleted = FALSE
@@ -596,7 +598,7 @@ export class EventRepository {
                 params.push(organizerId);
             }
 
-            const stats = await pgpDb.one(query, params);
+            const stats = await pgOne(query, params);
 
             return { status: true, message: "Statistiques récupérées", body: stats, code: 200 };
         } catch (error) {
@@ -607,7 +609,7 @@ export class EventRepository {
     // Soft delete event
     static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `UPDATE ${kEvent} SET
                     is_deleted = TRUE,
                     deleted_at = NOW(),
@@ -630,7 +632,7 @@ export class EventRepository {
     // Restore soft deleted event
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEvent} SET
                     is_deleted = FALSE,
                     deleted_at = NULL,
@@ -654,7 +656,7 @@ export class EventRepository {
     // Hard delete event
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEvent} WHERE id = $1`,
                 [id]
             );

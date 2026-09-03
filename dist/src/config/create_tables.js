@@ -648,8 +648,44 @@ JOIN ${tbl.kTrip} t ON gt.trip_id = t.id
 JOIN ${tbl.kSeat} s ON gts.seat_id = s.id
 JOIN ${tbl.kBus} ON s.bus_id = bus.id
 WHERE b.is_deleted = FALSE;
-        
+
         `
+    },
+    // Generic payment transaction ledger — one row per Orange Money attempt,
+    // regardless of what it's paying for (wallet top-up, booking, ticket
+    // purchase...). "settled" guards against double-crediting when both a
+    // status poll and the async webhook observe the same success.
+    {
+        query: `CREATE TABLE IF NOT EXISTS ${tbl.kPaymentTransaction} (
+            id SERIAL PRIMARY KEY,
+            customer_id INT NOT NULL REFERENCES ${tbl.kCustomer}(id),
+            provider VARCHAR(20) NOT NULL DEFAULT 'orange_money'
+                CHECK (provider IN ('orange_money')),
+            purpose VARCHAR(30) NOT NULL
+                CHECK (purpose IN ('wallet_topup', 'booking', 'ticket_purchase')),
+            purpose_ref_id INT,
+            order_id VARCHAR(50) NOT NULL UNIQUE,
+            pay_token VARCHAR(100),
+            subscriber_msisdn VARCHAR(20) NOT NULL,
+            amount INT NOT NULL,
+            currency VARCHAR(10) DEFAULT 'XAF',
+            description TEXT,
+            status VARCHAR(20) NOT NULL DEFAULT 'initiated'
+                CHECK (status IN ('initiated', 'pending', 'successful', 'failed', 'expired')),
+            provider_txn_id VARCHAR(100),
+            settled BOOLEAN NOT NULL DEFAULT FALSE,
+            settled_at TIMESTAMP,
+            error_message TEXT,
+            metadata JSONB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP
+        )`
+    },
+    {
+        query: `CREATE INDEX IF NOT EXISTS idx_payment_transaction_customer ON ${tbl.kPaymentTransaction}(customer_id)`
+    },
+    {
+        query: `CREATE INDEX IF NOT EXISTS idx_payment_transaction_pay_token ON ${tbl.kPaymentTransaction}(pay_token)`
     }
 ];
 async function createTables() {

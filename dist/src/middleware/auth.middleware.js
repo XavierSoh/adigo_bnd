@@ -10,7 +10,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.optionalAuthMiddleware = exports.authMiddleware = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const JWT_SECRET = process.env.JWT_SECRET || 'adigo_secret_key_2025';
+const env_1 = require("../utils/env");
+const JWT_SECRET = (0, env_1.requireEnv)('JWT_SECRET');
 /**
  * Verify JWT token from Authorization header
  */
@@ -85,7 +86,7 @@ const optionalAuthMiddleware = (req, res, next) => {
             : authHeader;
         if (token) {
             const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
-            req.userId = decoded.id;
+            req.userId = decoded.id ?? decoded.customerId;
             req.userEmail = decoded.email;
             req.userRole = decoded.role;
         }

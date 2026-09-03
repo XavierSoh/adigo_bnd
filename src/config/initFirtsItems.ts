@@ -11,38 +11,35 @@ import {
   kUsers,
 
 } from "../utils/constants";
-import pgpDb from "./pgdb";
+import { pgAny, pgNone } from "../utils/prisma-compat";
 import bcrypt from "bcrypt";
 
 export default async function initFirstItems() {
   // Initialiser l'utilisateur admin avec le mot de passe par défaut
   // Vérifier si l'utilisateur admin existe déjà
-  await pgpDb.manyOrNone(`SELECT * FROM "${kUsers}"`).then(async (data) => {
-    if (data.length === 0) {
-      const hashedPassword = await bcrypt.hash(kInitialPassword, parseInt(process.env.SALT || "10"));
-      const user: UserModel = new UserModel({
-        login: kInitialLogin,
-        password: hashedPassword, 
-        creation_date: new Date(),
-        super_u: kMd5,
-        account_status: "enabled",
-        role: "admin",
-      });
+  const data = await pgAny(`SELECT * FROM "${kUsers}"`);
+  if (data.length === 0) {
+    const hashedPassword = await bcrypt.hash(kInitialPassword, parseInt(process.env.SALT || "10"));
+    const user: UserModel = new UserModel({
+      login: kInitialLogin,
+      password: hashedPassword,
+      creation_date: new Date(),
+      super_u: kMd5,
+      account_status: "enabled",
+      role: "admin",
+    });
 
-      try {
-        await pgpDb.none(
-          `INSERT INTO "${kUsers}" (login, password, creation_date, super_u, account_status, role)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [user.login, user.password, user.creation_date, user.super_u, user.account_status, user.role]
-        );
-        
-      } catch (error) {
-       
-      }
-    } else {
-      
+    try {
+      await pgNone(
+        `INSERT INTO "${kUsers}" (login, password, creation_date, super_u, account_status, role)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [user.login, user.password, user.creation_date, user.super_u, user.account_status, user.role]
+      );
+
+    } catch (error) {
+
     }
-  });
+  }
   
   
 

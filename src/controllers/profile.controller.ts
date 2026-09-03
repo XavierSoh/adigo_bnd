@@ -17,11 +17,38 @@ export default class ProfileController{
                 body: null,
                 code: 500,
                 exception: error instanceof Error ? error.stack : undefined
-            } 
-            return res.status(500).json(  );
+            }
+            return res.status(500).json(responseModel);
         }
     }
- 
+
+    // Récupère un seul profil (avec ses droits d'accès) par son id — utilisé
+    // notamment juste après le login pour charger les droits de l'utilisateur.
+    static async getProfileById(req:Request, res:Response):Promise<any> {
+        const profileId = parseInt((req.params as { id: string }).id);
+        try {
+            if (isNaN(profileId)) {
+                return res.status(400).json({
+                    status: false,
+                    message: "ID de profil invalide",
+                    body: null,
+                    code: 400
+                });
+            }
+            const response = await ProfileRepository.getProfileById(profileId);
+            return res.status(response.code).json(response);
+        } catch (error) {
+            const responseModel:ResponseModel =  {
+                status: false,
+                message:error instanceof Error?error.message : "An error occurred while fetching the profile.",
+                body: null,
+                code: 500,
+                exception: error instanceof Error ? error.stack : undefined
+            }
+            return res.status(500).json(responseModel);
+        }
+    }
+
 
     static async createProfile(req:Request, res:Response):Promise<any> {
         const profile = req.body;

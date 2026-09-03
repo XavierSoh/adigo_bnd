@@ -1,9 +1,16 @@
 /**
  * Address Service
  * Business logic for saved addresses management
+ *
+ * Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+ * shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+ * NOTE: no `saved_addresses` table exists in the live schema — every call
+ * here 500s with "relation does not exist" regardless of driver, confirmed
+ * pre-existing. Not fixed here — out of scope for a driver swap, see
+ * BOOKING_MODULE_NOTES.md.
  */
 
-import pool from '../../config/database';
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgTransaction } from '../../utils/prisma-compat';
 import { SavedAddress, CreateAddressDto, UpdateAddressDto } from '../../models/parcel/address.model';
 
 export class AddressService {
@@ -16,24 +23,20 @@ export class AddressService {
       WHERE customer_id = $1
       ORDER BY is_default DESC, created_at DESC
     `;
-    const result = await pool.query(query, [customerId]);
-    return result.rows;
+    return await pgAny(query, [customerId]);
   }
 
   /**
    * Create a new address
    */
   async createAddress(data: CreateAddressDto): Promise<SavedAddress> {
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return await pgTransaction(async (tx) => {
       // If this is default, unset other defaults
       if (data.isDefault) {
-        await client.query(
+        await pgNone(
           'UPDATE saved_addresses SET is_default = false WHERE customer_id = $1',
-          [data.customerId]
+          [data.customerId],
+          tx
         );
       }
 
@@ -52,37 +55,24 @@ export class AddressService {
         data.latitude, data.longitude, data.isDefault || false
       ];
 
-      const result = await client.query(query, values);
-      await client.query('COMMIT');
-
-      return result.rows[0];
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      // Connection is managed by pg-promise
-    }
+      return await pgOne(query, values, tx);
+    });
   }
 
   /**
    * Update an address
    */
-  async updateAddress(addressId: number, data: UpdateAddressDto): Promise<SavedAddress> {
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+  async updateAddress(addressId: number, data: UpdateAddressDto): Promise<SavedAddress | null> {
+    return await pgTransaction(async (tx) => {
       // If setting as default, unset other defaults
       if (data.isDefault) {
-        const getCustomerQuery = 'SELECT customer_id FROM saved_addresses WHERE id = $1';
-        const customerResult = await client.query(getCustomerQuery, [addressId]);
+        const owner = await pgOneOrNone('SELECT customer_id FROM saved_addresses WHERE id = $1', [addressId], tx);
 
-        if (customerResult.rows.length > 0) {
-          await client.query(
+        if (owner) {
+          await pgNone(
             'UPDATE saved_addresses SET is_default = false WHERE customer_id = $1',
-            [customerResult.rows[0].customer_id]
+            [owner.customer_id],
+            tx
           );
         }
       }
@@ -111,17 +101,8 @@ export class AddressService {
         RETURNING *
       `;
 
-      const result = await client.query(query, values);
-      await client.query('COMMIT');
-
-      return result.rows[0];
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      // Connection is managed by pg-promise
-    }
+      return await pgOneOrNone(query, values, tx);
+    });
   }
 
   /**
@@ -129,7 +110,7 @@ export class AddressService {
    */
   async deleteAddress(addressId: number): Promise<void> {
     const query = 'DELETE FROM saved_addresses WHERE id = $1';
-    await pool.query(query, [addressId]);
+    await pgNone(query, [addressId]);
   }
 }
 

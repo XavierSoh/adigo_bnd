@@ -1,4 +1,4 @@
-import pgpDb from "./pgdb";
+import { pgNone } from "../utils/prisma-compat";
 import { kBooking, kCustomer } from "../utils/table_names";
 
 export const migrateBookingCreatedBy = async () => {
@@ -6,14 +6,14 @@ export const migrateBookingCreatedBy = async () => {
         console.log('🔄 Starting booking created_by migration...');
 
         // Drop the old constraint referencing users table
-        await pgpDb.none(`
+        await pgNone(`
             ALTER TABLE ${kBooking}
             DROP CONSTRAINT IF EXISTS booking_created_by_fkey
         `);
         console.log('✅ Dropped old created_by constraint (users table)');
 
         // Add new constraint referencing customer table
-        await pgpDb.none(`
+        await pgNone(`
             ALTER TABLE ${kBooking}
             ADD CONSTRAINT booking_created_by_fkey
             FOREIGN KEY (created_by) REFERENCES customer(id)

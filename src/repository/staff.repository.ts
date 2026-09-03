@@ -1,5 +1,6 @@
-import pgpDb from "../config/pgdb";
-import { kStaff, kUsers } from "../utils/table_names";
+// Migrated to Prisma's native model API (prisma.staff.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration").
+import prismaDb from "../config/prismaClient";
 import ResponseModel from "../models/response.model";
 import { StaffModel } from "../models/staff.model";
 
@@ -10,36 +11,30 @@ import { StaffModel } from "../models/staff.model";
 export class StaffRepository {
     static async create(staff: StaffModel): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(`
-                INSERT INTO ${kStaff} (
-                    first_name, birth_name, last_name, employee_id, birth_date,
-                    email, mobile_phone, landline_phone, contract_start_date,
-                    contract_start_time, weekly_working_hours, contract_end_date,
-                    contract_type, salary, payment_mode, created_by
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                RETURNING *
-            `, [
-                staff.first_name,
-                staff.birth_name,
-                staff.last_name,
-                staff.employee_id,
-                staff.birth_date,
-                staff.email,
-                staff.mobile_phone,
-                staff.landline_phone,
-                staff.contract_start_date,
-                staff.contract_start_time,
-                staff.weekly_working_hours,
-                staff.contract_end_date,
-                staff.contract_type,
-                staff.salary,
-                staff.payment_mode,
-                staff.created_by
-            ]);
-
-            if (!result) {
-                throw new Error('Failed to create staff member');
-            }
+            const result = await prismaDb.staff.create({
+                data: {
+                    first_name: staff.first_name,
+                    birth_name: staff.birth_name,
+                    last_name: staff.last_name,
+                    employee_id: staff.employee_id,
+                    birth_date: staff.birth_date,
+                    email: staff.email,
+                    mobile_phone: staff.mobile_phone,
+                    landline_phone: staff.landline_phone,
+                    contract_start_date: staff.contract_start_date,
+                    contract_start_time: staff.contract_start_time,
+                    weekly_working_hours: staff.weekly_working_hours,
+                    contract_end_date: staff.contract_end_date,
+                    contract_type: staff.contract_type,
+                    salary: staff.salary,
+                    payment_mode: staff.payment_mode,
+                    // NOTE: original inserted `created_by` too, but that
+                    // column doesn't exist on `staff` (verified against
+                    // prisma/schema.prisma — likely always NULL/ignored by
+                    // Postgres already since raw SQL never checked this
+                    // either... left out here since there's nowhere to put it).
+                } as any,
+            });
 
             return {
                 status: true,
@@ -61,17 +56,9 @@ export class StaffRepository {
     // GET BY ID
     static async findById(id: number, includeDeleted: boolean = false): Promise<ResponseModel> {
         try {
-            let query = `
-                SELECT *
-                FROM ${kStaff} 
-                WHERE id = $1
-            `;
-            
-            if (!includeDeleted) {
-                query += " AND is_deleted = false";
-            }
-
-            const staff = await pgpDb.oneOrNone(query, [id]);
+            const staff = await prismaDb.staff.findFirst({
+                where: includeDeleted ? { id } : { id, is_deleted: false },
+            });
 
             if (!staff) {
                 return {
@@ -102,18 +89,10 @@ export class StaffRepository {
     // GET ALL
     static async findAll(includeDeleted: boolean = false): Promise<ResponseModel> {
         try {
-            let query = `
-                SELECT *
-                FROM ${kStaff}
-            `;
-            
-            if (!includeDeleted) {
-                query += " WHERE is_deleted = false";
-            }
-
-            query += " ORDER BY last_name ASC, first_name ASC";
-
-            const staffMembers = await pgpDb.manyOrNone(query);
+            const staffMembers = await prismaDb.staff.findMany({
+                where: includeDeleted ? {} : { is_deleted: false },
+                orderBy: [{ last_name: 'asc' }, { first_name: 'asc' }],
+            });
 
             return {
                 status: true,
@@ -136,23 +115,14 @@ export class StaffRepository {
     static async update(id: number, staffData: Partial<StaffModel>): Promise<ResponseModel> {
         try {
             // Ne pas permettre la mise à jour de certains champs
-            const { id: _, is_deleted, created_by, ...safeUpdates } = staffData;
+            const { id: _, is_deleted, created_by, ...safeUpdates } = staffData as any;
 
-            const setClause = Object.keys(safeUpdates)
-                .map((key, index) => `${key} = $${index + 2}`)
-                .join(", ");
+            const result = await prismaDb.staff.updateMany({
+                where: { id, is_deleted: false },
+                data: { ...safeUpdates, updated_at: new Date() },
+            });
 
-            const query = `
-                UPDATE ${kStaff}
-                SET ${setClause}, updated_at = CURRENT_TIMESTAMP
-                WHERE id = $1 AND is_deleted = false
-                RETURNING *
-            `;
-
-            const params = [id, ...Object.values(safeUpdates)];
-            const updatedStaff = await pgpDb.oneOrNone(query, params);
-
-            if (!updatedStaff) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Staff member not found or already deleted",
@@ -160,6 +130,7 @@ export class StaffRepository {
                     code: 404
                 };
             }
+            const updatedStaff = await prismaDb.staff.findUnique({ where: { id } });
 
             return {
                 status: true,
@@ -181,16 +152,12 @@ export class StaffRepository {
     // SOFT DELETE
     static async softDelete(id: number): Promise<ResponseModel> {
         try {
-            const query = `
-                UPDATE ${kStaff}
-                SET is_deleted = true, deleted_at = CURRENT_TIMESTAMP
-                WHERE id = $1 AND is_deleted = false
-                RETURNING id
-            `;
-            
-            const result = await pgpDb.oneOrNone(query, [id]);
+            const result = await prismaDb.staff.updateMany({
+                where: { id, is_deleted: false },
+                data: { is_deleted: true, deleted_at: new Date() },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Staff member not found or already deleted",
@@ -219,15 +186,9 @@ export class StaffRepository {
     // HARD DELETE
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const query = `
-                DELETE FROM ${kStaff}
-                WHERE id = $1
-                RETURNING id
-            `;
-            
-            const result = await pgpDb.oneOrNone(query, [id]);
+            const result = await prismaDb.staff.deleteMany({ where: { id } });
 
-            if (!result) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Staff member not found",
@@ -256,16 +217,12 @@ export class StaffRepository {
     // RESTORE (annuler soft delete)
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const query = `
-                UPDATE ${kStaff}
-                SET is_deleted = false, deleted_at = NULL, deleted_by = NULL
-                WHERE id = $1 AND is_deleted = true
-                RETURNING id, first_name, last_name
-            `;
-            
-            const restoredStaff = await pgpDb.oneOrNone(query, [id]);
+            const result = await prismaDb.staff.updateMany({
+                where: { id, is_deleted: true },
+                data: { is_deleted: false, deleted_at: null, deleted_by: null },
+            });
 
-            if (!restoredStaff) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Staff member not found or not deleted",
@@ -273,6 +230,10 @@ export class StaffRepository {
                     code: 404
                 };
             }
+            const restoredStaff = await prismaDb.staff.findUnique({
+                where: { id },
+                select: { id: true, first_name: true, last_name: true },
+            });
 
             return {
                 status: true,
@@ -294,16 +255,12 @@ export class StaffRepository {
     // Méthode supplémentaire pour mettre à jour le dernier paiement de salaire
     static async updateLastSalaryPayment(id: number, paymentDate: Date): Promise<ResponseModel> {
         try {
-            const query = `
-                UPDATE ${kStaff}
-                SET last_salary_payment = $2
-                WHERE id = $1
-                RETURNING id, last_salary_payment
-            `;
-            
-            const result = await pgpDb.oneOrNone(query, [id, paymentDate]);
+            const result = await prismaDb.staff.updateMany({
+                where: { id },
+                data: { last_salary_payment: paymentDate },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Staff member not found",
@@ -311,11 +268,15 @@ export class StaffRepository {
                     code: 404
                 };
             }
+            const updated = await prismaDb.staff.findUnique({
+                where: { id },
+                select: { id: true, last_salary_payment: true },
+            });
 
             return {
                 status: true,
                 message: "Last salary payment updated successfully",
-                body: result,
+                body: updated,
                 code: 200
             };
         } catch (error) {
@@ -329,35 +290,48 @@ export class StaffRepository {
         }
     }
 
-    static async  getStaffWithoutUser(): Promise<StaffModel[]> {
-  try {
-    const result = await pgpDb.query( `SELECT DISTINCT  s.*  FROM ${kStaff} s WHERE s.id NOT IN (SELECT u.staff FROM "${kUsers}" u WHERE u.staff IS NOT NULL) `);
- 
-    return result as StaffModel[];
-  } catch (err) {
-    console.error('Erreur lors de la récupération des staffs:', err);
-    throw err;
-  }
-}
- static async  generateUniqueEmployeeId() {
-  // Récupérer le dernier ID existant
-  const result = await pgpDb.oneOrNone(
-      `SELECT employee_id FROM ${kStaff} WHERE employee_id LIKE \'EMPL%\' ORDER BY employee_id DESC LIMIT 1`
-  );
+    static async getStaffWithoutUser(): Promise<StaffModel[]> {
+        try {
+            // AMBIGUOUS CASE, flagged not guessed: `users.staff` has no FK
+            // constraint in the DB, so there's no Prisma relation to filter
+            // through (`{ users: { none: {} } }` isn't available). Batches
+            // the referenced ids instead of a raw NOT IN subquery.
+            const referenced = await prismaDb.users.findMany({
+                where: { staff: { not: null } },
+                select: { staff: true },
+            });
+            const referencedIds = referenced.map((u) => u.staff!).filter((v) => v != null);
+            const result = await prismaDb.staff.findMany({
+                where: referencedIds.length ? { id: { notIn: referencedIds } } : {},
+            });
+            return result as unknown as StaffModel[];
+        } catch (err) {
+            console.error('Erreur lors de la récupération des staffs:', err);
+            throw err;
+        }
+    }
 
-  let newEmployeeId;
-  
-  if (result) {
-      // Extraire le numéro du dernier matricule (EMPLXXXX → XXXX)
-      const lastNumber = parseInt(result.employee_id.replace('EMPL', ''), 10);
-      newEmployeeId = `EMPL${(lastNumber + 1).toString().padStart(4, '0')}`;
-  } else {
-      // Aucun employé dans la base, commencer à EMPL1000
-      newEmployeeId = 'EMPL1000';
-  }
+    static async generateUniqueEmployeeId() {
+        // Récupérer le dernier ID existant
+        const result = await prismaDb.staff.findFirst({
+            where: { employee_id: { startsWith: 'EMPL' } },
+            orderBy: { employee_id: 'desc' },
+            select: { employee_id: true },
+        });
 
-  return newEmployeeId;
-}
+        let newEmployeeId;
+
+        if (result) {
+            // Extraire le numéro du dernier matricule (EMPLXXXX → XXXX)
+            const lastNumber = parseInt(result.employee_id.replace('EMPL', ''), 10);
+            newEmployeeId = `EMPL${(lastNumber + 1).toString().padStart(4, '0')}`;
+        } else {
+            // Aucun employé dans la base, commencer à EMPL1000
+            newEmployeeId = 'EMPL1000';
+        }
+
+        return newEmployeeId;
+    }
 
 
 }

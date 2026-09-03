@@ -1,4 +1,6 @@
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 import { EventTicketType, EventTicketTypeCreateDto, EventTicketTypeUpdateDto } from "../models/event-ticket-type.model";
 import ResponseModel from "../../models/response.model";
 import { kEventTicketType, kEvent } from "../../utils/table_names";
@@ -24,7 +26,7 @@ export class EventTicketTypeRepository {
     // Create new ticket type
     static async create(ticketType: EventTicketTypeCreateDto, createdBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `INSERT INTO ${kEventTicketType} (
                     event_id, name, description, price, quantity,
                     available_quantity, min_per_order, max_per_order,
@@ -60,7 +62,7 @@ export class EventTicketTypeRepository {
     // Find by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const ticketType = await pgpDb.oneOrNone(
+            const ticketType = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE tt.id = $1 AND tt.is_deleted = FALSE`,
@@ -92,7 +94,7 @@ export class EventTicketTypeRepository {
 
             query += ' ORDER BY tt.display_order ASC, tt.price ASC';
 
-            const ticketTypes = await pgpDb.any(query, [eventId]);
+            const ticketTypes = await pgAny(query, [eventId]);
 
             return { status: true, message: "Types de tickets récupérés", body: ticketTypes, code: 200 };
         } catch (error) {
@@ -103,7 +105,7 @@ export class EventTicketTypeRepository {
     // Update ticket type
     static async update(id: number, ticketType: EventTicketTypeUpdateDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventTicketType} SET
                     name = COALESCE($1, name),
                     description = COALESCE($2, description),
@@ -148,7 +150,7 @@ export class EventTicketTypeRepository {
     // Decrease available quantity (when ticket is purchased)
     static async decreaseAvailableQuantity(id: number, quantity: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventTicketType} SET
                     available_quantity = available_quantity - $1,
                     updated_at = NOW()
@@ -170,7 +172,7 @@ export class EventTicketTypeRepository {
     // Increase available quantity (when ticket is refunded)
     static async increaseAvailableQuantity(id: number, quantity: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventTicketType} SET
                     available_quantity = available_quantity + $1,
                     updated_at = NOW()
@@ -192,7 +194,7 @@ export class EventTicketTypeRepository {
     // Check availability
     static async checkAvailability(id: number, requestedQuantity: number): Promise<ResponseModel> {
         try {
-            const ticketType = await pgpDb.oneOrNone(
+            const ticketType = await pgOneOrNone(
                 `SELECT id, name, available_quantity, is_active, sale_start_date, sale_end_date
                 FROM ${kEventTicketType}
                 WHERE id = $1 AND is_deleted = FALSE`,
@@ -232,7 +234,7 @@ export class EventTicketTypeRepository {
     // Get statistics by event
     static async getStatisticsByEvent(eventId: number): Promise<ResponseModel> {
         try {
-            const stats = await pgpDb.any(
+            const stats = await pgAny(
                 `SELECT
                     tt.id,
                     tt.name,
@@ -257,7 +259,7 @@ export class EventTicketTypeRepository {
     static async reorder(ticketTypeOrders: { id: number; display_order: number }[]): Promise<ResponseModel> {
         try {
             for (const item of ticketTypeOrders) {
-                await pgpDb.none(
+                await pgNone(
                     `UPDATE ${kEventTicketType} SET display_order = $1, updated_at = NOW() WHERE id = $2`,
                     [item.display_order, item.id]
                 );
@@ -272,7 +274,7 @@ export class EventTicketTypeRepository {
     // Soft delete ticket type
     static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `UPDATE ${kEventTicketType} SET
                     is_deleted = TRUE,
                     deleted_at = NOW(),
@@ -295,7 +297,7 @@ export class EventTicketTypeRepository {
     // Restore soft deleted ticket type
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventTicketType} SET
                     is_deleted = FALSE,
                     deleted_at = NULL,
@@ -319,7 +321,7 @@ export class EventTicketTypeRepository {
     // Hard delete ticket type
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventTicketType} WHERE id = $1`,
                 [id]
             );

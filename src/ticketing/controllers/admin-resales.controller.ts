@@ -6,7 +6,10 @@
 
 import { Request, Response } from 'express';
 import { I18n } from '../../utils/i18n';
-import pgpDb from '../../config/pgdb';
+// Migrated to Prisma's native model API — logic lives in
+// AdminResalesRepository (prisma.event_ticket_resale.*), see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration", tier 3).
+import { AdminResalesRepository } from '../repositories/admin-resales.repository';
 
 export class AdminResalesController {
 
@@ -19,54 +22,11 @@ export class AdminResalesController {
             const lang = req.lang || 'en';
             const { limit = 50, offset = 0, status } = req.query;
 
-            let query = `
-                SELECT
-                    etr.*,
-                    json_build_object(
-                        'id', et.id,
-                        'reference', et.reference,
-                        'original_price', et.total_price
-                    ) AS ticket,
-                    json_build_object(
-                        'id', e.id,
-                        'title', e.title,
-                        'event_code', e.event_code
-                    ) AS event,
-                    json_build_object(
-                        'id', c.id,
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email
-                    ) AS seller
-                FROM event_ticket_resale etr
-                JOIN event_ticket et ON etr.ticket_purchase_id = et.id
-                JOIN event e ON et.event_id = e.id
-                JOIN customer c ON etr.seller_id = c.id
-                WHERE etr.is_deleted = FALSE
-            `;
-
-            const params: any[] = [];
-
-            if (status) {
-                params.push(status);
-                query += ` AND etr.status = $${params.length}`;
-            }
-
-            query += ` ORDER BY etr.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-            params.push(parseInt(limit as string), parseInt(offset as string));
-
-            const resales = await pgpDb.any(query, params);
-
-            // Get total count
-            let countQuery = `SELECT COUNT(*)::int AS total FROM event_ticket_resale WHERE is_deleted = FALSE`;
-            const countParams: any[] = [];
-
-            if (status) {
-                countParams.push(status);
-                countQuery += ` AND status = $${countParams.length}`;
-            }
-
-            const { total } = await pgpDb.one(countQuery, countParams);
+            const { resales, total } = await AdminResalesRepository.findAll(
+                parseInt(limit as string),
+                parseInt(offset as string),
+                status as string | undefined
+            );
 
             res.status(200).json({
                 status: true,
@@ -101,18 +61,7 @@ export class AdminResalesController {
         try {
             const lang = req.lang || 'en';
 
-            const stats = await pgpDb.one(`
-                SELECT
-                    COUNT(*)::int AS total_resales,
-                    COUNT(*) FILTER (WHERE status = 'available')::int AS available_resales,
-                    COUNT(*) FILTER (WHERE status = 'sold')::int AS sold_resales,
-                    COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_resales,
-                    COUNT(*) FILTER (WHERE status = 'expired')::int AS expired_resales,
-                    COALESCE(AVG(resale_price), 0)::int AS average_resale_price,
-                    COALESCE(SUM(resale_price) FILTER (WHERE status = 'sold'), 0)::int AS total_resale_revenue
-                FROM event_ticket_resale
-                WHERE is_deleted = FALSE
-            `);
+            const stats = await AdminResalesRepository.getStats();
 
             res.status(200).json({
                 status: true,
@@ -141,12 +90,7 @@ export class AdminResalesController {
             const resaleId = parseInt((req.params as { id: string }).id);
             const adminId = req.userId;
 
-            const updatedResale = await pgpDb.one(`
-                UPDATE event_ticket_resale
-                SET status = 'available', approved_by = $2, approved_at = CURRENT_TIMESTAMP
-                WHERE id = $1
-                RETURNING *
-            `, [resaleId, adminId]);
+            const updatedResale = await AdminResalesRepository.approve(resaleId, adminId);
 
             res.status(200).json({
                 status: true,
@@ -174,7 +118,6 @@ export class AdminResalesController {
             const lang = req.lang || 'en';
             const resaleId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
-            const adminId = req.userId;
 
             if (!reason) {
                 res.status(400).json({
@@ -185,12 +128,7 @@ export class AdminResalesController {
                 return;
             }
 
-            const updatedResale = await pgpDb.one(`
-                UPDATE event_ticket_resale
-                SET status = 'cancelled', cancellation_reason = $2, cancelled_by = $3, cancelled_at = CURRENT_TIMESTAMP
-                WHERE id = $1
-                RETURNING *
-            `, [resaleId, reason, adminId]);
+            const updatedResale = await AdminResalesRepository.reject(resaleId, reason);
 
             res.status(200).json({
                 status: true,
@@ -217,15 +155,9 @@ export class AdminResalesController {
         try {
             const lang = req.lang || 'en';
             const resaleId = parseInt((req.params as { id: string }).id);
-            const { reason } = req.body;
             const adminId = req.userId;
 
-            const deletedResale = await pgpDb.one(`
-                UPDATE event_ticket_resale
-                SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP, deleted_by = $2, deletion_reason = $3
-                WHERE id = $1
-                RETURNING *
-            `, [resaleId, adminId, reason || 'Deleted by admin']);
+            const deletedResale = await AdminResalesRepository.softDelete(resaleId, adminId);
 
             res.status(200).json({
                 status: true,

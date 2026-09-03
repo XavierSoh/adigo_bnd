@@ -1,4 +1,6 @@
-import pgpDb from "../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../utils/prisma-compat";
 import { CompanySettingsModel, UpdateCompanySettingsDTO } from "../models/company-settings.model";
 import ResponseModel from "../models/response.model";
 
@@ -14,7 +16,7 @@ export class CompanySettingsRepository {
      */
     static async getSettings(): Promise<ResponseModel> {
         try {
-            const settings = await pgpDb.oneOrNone<CompanySettingsModel>(
+            const settings = await pgOneOrNone<CompanySettingsModel>(
                 `SELECT * FROM ${TABLE_NAME} WHERE id = 1`
             );
 
@@ -77,7 +79,7 @@ export class CompanySettingsRepository {
                 RETURNING *
             `;
 
-            const result = await pgpDb.oneOrNone<CompanySettingsModel>(query, values);
+            const result = await pgOneOrNone<CompanySettingsModel>(query, values);
 
             if (!result) {
                 // If update failed because row doesn't exist, create default
@@ -106,7 +108,7 @@ export class CompanySettingsRepository {
      */
     private static async createDefaultSettings(): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone<CompanySettingsModel>(
+            const result = await pgOneOrNone<CompanySettingsModel>(
                 `INSERT INTO ${TABLE_NAME} (
                     id,
                     company_name,

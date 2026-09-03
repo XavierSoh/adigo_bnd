@@ -5,7 +5,7 @@
 
 import { Request, Response } from 'express';
 import restaurantService from '../../services/food/restaurant.service';
-import pool from '../../config/database';
+import { pgAny } from '../../utils/prisma-compat';
 
 export class RestaurantController {
   /**
@@ -86,11 +86,11 @@ export class RestaurantController {
 
       query += ' ORDER BY category, name';
 
-      const result = await pool.query(query, params);
+      const rows = await pgAny(query, params);
 
       return res.json({
         success: true,
-        data: result.rows
+        data: rows
       });
     } catch (error: any) {
       console.error('Error getting menu:', error);

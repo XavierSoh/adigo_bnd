@@ -8,6 +8,7 @@ const pgdb_1 = __importDefault(require("../config/pgdb"));
 const table_names_1 = require("../utils/table_names");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const env_1 = require("../utils/env");
 class CustomerRepository {
     static async setResetCode(email, code) {
         this.resetCodes[email] = code;
@@ -68,7 +69,7 @@ class CustomerRepository {
                 customer.phone_verified ?? false
             ]);
             // Generate JWT token for auto-login after registration
-            const token = jsonwebtoken_1.default.sign({ customerId: result.id, email: result.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+            const token = jsonwebtoken_1.default.sign({ customerId: result.id, email: result.email }, (0, env_1.requireEnv)('JWT_SECRET'), { expiresIn: '7d' });
             return {
                 status: true,
                 message: "Client créé avec succès",
@@ -364,7 +365,7 @@ class CustomerRepository {
             // Remove password from response
             delete customer.password;
             // Generate JWT token
-            const token = jsonwebtoken_1.default.sign({ customerId: customer.id, email: customer.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+            const token = jsonwebtoken_1.default.sign({ customerId: customer.id, email: customer.email }, (0, env_1.requireEnv)('JWT_SECRET'), { expiresIn: '7d' });
             return {
                 status: true,
                 message: "Connexion réussie",

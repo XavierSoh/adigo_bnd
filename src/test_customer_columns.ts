@@ -1,11 +1,11 @@
-import pgpDb from './config/pgdb';
+import { pgAny, pgOneOrNone } from './utils/prisma-compat';
 
 async function testCustomerColumns() {
     try {
         console.log('Testing customer table columns...\n');
 
         // Check if columns exist
-        const columns = await pgpDb.manyOrNone(`
+        const columns = await pgAny(`
             SELECT column_name, data_type, column_default
             FROM information_schema.columns
             WHERE table_name = 'customer'
@@ -26,7 +26,7 @@ async function testCustomerColumns() {
 
         // Try to fetch a customer
         console.log('Testing customer fetch for ID 34...');
-        const customer = await pgpDb.oneOrNone(`
+        const customer = await pgOneOrNone(`
             SELECT id, first_name, last_name, email, phone,
                    profile_picture, wallet_balance
             FROM customer

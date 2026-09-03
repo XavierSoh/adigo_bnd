@@ -6,7 +6,10 @@
 
 import { Request, Response } from 'express';
 import { I18n } from '../../utils/i18n';
-import pgpDb from '../../config/pgdb';
+// Migrated to Prisma's native model API — logic lives in
+// AdminReportsRepository, see BOOKING_MODULE_NOTES.md ("Full Prisma
+// relational-API migration", tier 3).
+import { AdminReportsRepository } from '../repositories/admin-reports.repository';
 import { ExportService } from '../services/export.service';
 
 export class AdminReportsController {
@@ -19,27 +22,7 @@ export class AdminReportsController {
         try {
             const { format = 'excel' } = req.query;
 
-            // Get all users
-            const users = await pgpDb.any(`
-                SELECT
-                    c.id,
-                    c.first_name,
-                    c.last_name,
-                    c.email,
-                    c.phone,
-                    c.role,
-                    c.is_active,
-                    c.created_at,
-                    COALESCE(w.balance, 0)::int AS wallet_balance,
-                    COUNT(DISTINCT et.id)::int AS total_tickets_purchased
-                FROM customer c
-                LEFT JOIN wallet w ON c.id = w.customer_id
-                LEFT JOIN event_ticket et ON c.id = et.customer_id AND et.is_deleted = FALSE
-                WHERE c.is_deleted = FALSE
-                GROUP BY c.id, c.first_name, c.last_name, c.email, c.phone, c.role, c.is_active, c.created_at, w.balance
-                ORDER BY c.created_at DESC
-            `);
-
+            const users = await AdminReportsRepository.getUsersForExport();
             const formattedData = ExportService.formatUsersForExport(users);
 
             if (format === 'csv') {
@@ -81,19 +64,7 @@ export class AdminReportsController {
         try {
             const { format = 'excel' } = req.query;
 
-            // Get all events
-            const events = await pgpDb.any(`
-                SELECT
-                    e.*,
-                    json_build_object('name', ec.name) AS category,
-                    json_build_object('organization_name', eo.organization_name) AS organizer
-                FROM event e
-                LEFT JOIN event_category ec ON e.category_id = ec.id
-                LEFT JOIN event_organizer eo ON e.organizer_id = eo.id
-                WHERE e.is_deleted = FALSE
-                ORDER BY e.created_at DESC
-            `);
-
+            const events = await AdminReportsRepository.getEventsForExport();
             const formattedData = ExportService.formatEventsForExport(events);
 
             if (format === 'csv') {
@@ -135,30 +106,7 @@ export class AdminReportsController {
         try {
             const { format = 'excel' } = req.query;
 
-            // Get all tickets
-            const tickets = await pgpDb.any(`
-                SELECT
-                    et.*,
-                    json_build_object(
-                        'title', e.title,
-                        'event_code', e.event_code
-                    ) AS event,
-                    json_build_object(
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email
-                    ) AS customer,
-                    json_build_object(
-                        'name', ett.name
-                    ) AS ticket_type
-                FROM event_ticket et
-                JOIN event e ON et.event_id = e.id
-                JOIN customer c ON et.customer_id = c.id
-                LEFT JOIN event_ticket_type ett ON et.ticket_type_id = ett.id
-                WHERE et.is_deleted = FALSE
-                ORDER BY et.created_at DESC
-            `);
-
+            const tickets = await AdminReportsRepository.getTicketsForExport();
             const formattedData = ExportService.formatTicketsForExport(tickets);
 
             if (format === 'csv') {
@@ -200,20 +148,7 @@ export class AdminReportsController {
         try {
             const { format = 'excel' } = req.query;
 
-            // Get all transactions
-            const transactions = await pgpDb.any(`
-                SELECT
-                    wt.*,
-                    json_build_object(
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email
-                    ) AS customer
-                FROM wallet_transaction wt
-                JOIN customer c ON wt.customer_id = c.id
-                ORDER BY wt.created_at DESC
-            `);
-
+            const transactions = await AdminReportsRepository.getTransactionsForExport();
             const formattedData = ExportService.formatTransactionsForExport(transactions);
 
             if (format === 'csv') {
@@ -256,69 +191,15 @@ export class AdminReportsController {
             const lang = req.lang || 'en';
             const { start_date, end_date } = req.query;
 
-            let dateFilter = '';
-            const params: any[] = [];
-
-            if (start_date) {
-                params.push(start_date);
-                dateFilter += ` AND et.created_at >= $${params.length}`;
-            }
-
-            if (end_date) {
-                params.push(end_date);
-                dateFilter += ` AND et.created_at <= $${params.length}`;
-            }
-
-            // Total revenue
-            const totalRevenue = await pgpDb.one(`
-                SELECT
-                    COALESCE(SUM(et.total_price), 0)::int AS tickets_revenue,
-                    COALESCE((SELECT SUM(premium_design_amount) FROM event WHERE is_deleted = FALSE), 0)::int AS design_revenue,
-                    COALESCE((SELECT SUM(boost_amount) FROM event WHERE is_deleted = FALSE), 0)::int AS boost_revenue,
-                    COALESCE((SELECT SUM(field_service_amount) FROM event WHERE is_deleted = FALSE), 0)::int AS field_service_revenue
-                FROM event_ticket et
-                WHERE et.is_deleted = FALSE
-                ${dateFilter}
-            `, params);
-
-            // Revenue by organizer
-            const byOrganizer = await pgpDb.any(`
-                SELECT
-                    eo.id,
-                    eo.organization_name,
-                    COUNT(DISTINCT e.id)::int AS events_count,
-                    COALESCE(SUM(et.total_price), 0)::int AS revenue
-                FROM event_organizer eo
-                LEFT JOIN event e ON eo.id = e.organizer_id AND e.is_deleted = FALSE
-                LEFT JOIN event_ticket et ON e.id = et.event_id AND et.is_deleted = FALSE ${dateFilter}
-                WHERE eo.is_deleted = FALSE
-                GROUP BY eo.id, eo.organization_name
-                ORDER BY revenue DESC
-            `, params);
-
-            // Revenue by category
-            const byCategory = await pgpDb.any(`
-                SELECT
-                    ec.id,
-                    ec.name,
-                    COUNT(DISTINCT e.id)::int AS events_count,
-                    COALESCE(SUM(et.total_price), 0)::int AS revenue
-                FROM event_category ec
-                LEFT JOIN event e ON ec.id = e.category_id AND e.is_deleted = FALSE
-                LEFT JOIN event_ticket et ON e.id = et.event_id AND et.is_deleted = FALSE ${dateFilter}
-                WHERE ec.is_deleted = FALSE
-                GROUP BY ec.id, ec.name
-                ORDER BY revenue DESC
-            `, params);
+            const report = await AdminReportsRepository.getRevenueReport(
+                start_date ? new Date(start_date as string) : undefined,
+                end_date ? new Date(end_date as string) : undefined
+            );
 
             res.status(200).json({
                 status: true,
                 message: I18n.t('revenue_report_generated', lang),
-                body: {
-                    total_revenue: totalRevenue,
-                    by_organizer: byOrganizer,
-                    by_category: byCategory
-                },
+                body: report,
                 code: 200
             });
         } catch (error) {

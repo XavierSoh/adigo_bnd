@@ -1,4 +1,4 @@
-import pgpDb from '../config/pgdb';
+import { pgOne, pgNone, pgTransaction } from '../utils/prisma-compat';
 import { kCustomer } from '../utils/table_names';
 import { calculateTierFromPoints, calculatePointsEarned, TIER_CONFIGS } from '../config/tier.config';
 
@@ -12,11 +12,12 @@ export class TierService {
         description: string
     ): Promise<{ success: boolean; pointsAdded: number; newTier?: string; tierUpgraded?: boolean }> {
         try {
-            return await pgpDb.tx(async (t) => {
+            return await pgTransaction(async (tx) => {
                 // Get current customer data
-                const customer = await t.one(
+                const customer = await pgOne(
                     `SELECT id, loyalty_points, customer_tier FROM ${kCustomer} WHERE id = $1`,
-                    [customerId]
+                    [customerId],
+                    tx
                 );
 
                 const currentPoints = customer.loyalty_points || 0;
@@ -31,13 +32,14 @@ export class TierService {
                 const tierUpgraded = newTierConfig.name !== currentTier;
 
                 // Update customer
-                await t.none(
+                await pgNone(
                     `UPDATE ${kCustomer}
                      SET loyalty_points = $1,
                          customer_tier = $2,
                          updated_at = NOW()
                      WHERE id = $3`,
-                    [newPoints, newTierConfig.name, customerId]
+                    [newPoints, newTierConfig.name, customerId],
+                    tx
                 );
 
                 console.log(`✨ Loyalty points updated for customer ${customerId}:`);
@@ -63,7 +65,7 @@ export class TierService {
      */
     static async recalculateTier(customerId: number): Promise<{ success: boolean; tier?: string }> {
         try {
-            const customer = await pgpDb.one(
+            const customer = await pgOne(
                 `SELECT id, loyalty_points, customer_tier FROM ${kCustomer} WHERE id = $1`,
                 [customerId]
             );
@@ -72,7 +74,7 @@ export class TierService {
             const correctTier = calculateTierFromPoints(currentPoints);
 
             if (correctTier.name !== customer.customer_tier) {
-                await pgpDb.none(
+                await pgNone(
                     `UPDATE ${kCustomer} SET customer_tier = $1, updated_at = NOW() WHERE id = $2`,
                     [correctTier.name, customerId]
                 );

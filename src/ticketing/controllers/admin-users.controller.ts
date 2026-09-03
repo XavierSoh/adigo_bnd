@@ -6,7 +6,10 @@
 
 import { Request, Response } from 'express';
 import { I18n } from '../../utils/i18n';
-import pgpDb from '../../config/pgdb';
+// Migrated to Prisma's native model API — logic lives in
+// AdminUsersRepository (prisma.customer.*), see BOOKING_MODULE_NOTES.md
+// ("Full Prisma relational-API migration", tier 3).
+import { AdminUsersRepository } from '../repositories/admin-users.repository';
 
 export class AdminUsersController {
 
@@ -17,49 +20,26 @@ export class AdminUsersController {
     static async getAllUsers(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const { limit = 50, offset = 0, include_deleted = 'false' } = req.query;
+            const {
+                limit = 50,
+                offset = 0,
+                include_deleted = 'false',
+                role,
+                is_active,
+                all_customers = 'false',
+            } = req.query;
 
             const limitNum = parseInt(limit as string);
             const offsetNum = parseInt(offset as string);
 
-            let query = `
-                SELECT
-                    c.id,
-                    c.first_name,
-                    c.last_name,
-                    c.email,
-                    c.phone,
-                    c.role,
-                    c.is_active,
-                    c.is_deleted,
-                    c.created_at,
-                    c.updated_at,
-                    COALESCE(w.balance, 0)::int AS wallet_balance,
-                    COUNT(DISTINCT et.id)::int AS total_tickets_purchased
-                FROM customer c
-                LEFT JOIN wallet w ON c.id = w.customer_id
-                LEFT JOIN event_ticket et ON c.id = et.customer_id AND et.is_deleted = FALSE
-            `;
-
-            if (include_deleted !== 'true') {
-                query += ` WHERE c.is_deleted = FALSE`;
-            }
-
-            query += `
-                GROUP BY c.id, c.first_name, c.last_name, c.email, c.phone, c.role, c.is_active, c.is_deleted, c.created_at, c.updated_at, w.balance
-                ORDER BY c.created_at DESC
-                LIMIT $1 OFFSET $2
-            `;
-
-            const users = await pgpDb.any(query, [limitNum, offsetNum]);
-
-            // Get total count
-            let countQuery = `SELECT COUNT(*)::int AS total FROM customer`;
-            if (include_deleted !== 'true') {
-                countQuery += ` WHERE is_deleted = FALSE`;
-            }
-
-            const { total } = await pgpDb.one(countQuery);
+            const { users, total } = await AdminUsersRepository.findAll({
+                limit: limitNum,
+                offset: offsetNum,
+                includeDeleted: include_deleted === 'true',
+                role: role && typeof role === 'string' ? role : undefined,
+                isActive: (is_active === 'true' || is_active === 'false') ? is_active === 'true' : undefined,
+                allCustomers: all_customers === 'true',
+            });
 
             res.status(200).json({
                 status: true,
@@ -104,43 +84,11 @@ export class AdminUsersController {
                 return;
             }
 
-            let query = `
-                SELECT
-                    c.id,
-                    c.first_name,
-                    c.last_name,
-                    c.email,
-                    c.phone,
-                    c.role,
-                    c.is_active,
-                    c.created_at,
-                    COALESCE(w.balance, 0)::int AS wallet_balance
-                FROM customer c
-                LEFT JOIN wallet w ON c.id = w.customer_id
-                WHERE c.is_deleted = FALSE
-                AND (
-                    c.first_name ILIKE $1
-                    OR c.last_name ILIKE $1
-                    OR c.email ILIKE $1
-                    OR c.phone ILIKE $1
-                )
-            `;
-
-            const params: any[] = [`%${q}%`];
-
-            if (role) {
-                query += ` AND c.role = $${params.length + 1}`;
-                params.push(role);
-            }
-
-            if (is_active !== undefined) {
-                query += ` AND c.is_active = $${params.length + 1}`;
-                params.push(is_active === 'true');
-            }
-
-            query += ` ORDER BY c.created_at DESC LIMIT 50`;
-
-            const users = await pgpDb.any(query, params);
+            const users = await AdminUsersRepository.search(
+                q,
+                role && typeof role === 'string' ? role : undefined,
+                is_active !== undefined ? is_active === 'true' : undefined
+            );
 
             res.status(200).json({
                 status: true,
@@ -168,19 +116,7 @@ export class AdminUsersController {
             const lang = req.lang || 'en';
             const userId = parseInt((req.params as { id: string }).id);
 
-            const user = await pgpDb.oneOrNone(`
-                SELECT
-                    c.*,
-                    COALESCE(w.balance, 0)::int AS wallet_balance,
-                    COUNT(DISTINCT et.id)::int AS total_tickets_purchased,
-                    COUNT(DISTINCT eo.id)::int AS organizer_profiles
-                FROM customer c
-                LEFT JOIN wallet w ON c.id = w.customer_id
-                LEFT JOIN event_ticket et ON c.id = et.customer_id AND et.is_deleted = FALSE
-                LEFT JOIN event_organizer eo ON c.id = eo.customer_id AND eo.is_deleted = FALSE
-                WHERE c.id = $1
-                GROUP BY c.id, w.balance
-            `, [userId]);
+            const user = await AdminUsersRepository.findById(userId);
 
             if (!user) {
                 res.status(404).json({
@@ -216,7 +152,7 @@ export class AdminUsersController {
         try {
             const lang = req.lang || 'en';
             const userId = parseInt((req.params as { id: string }).id);
-            const { is_active, reason } = req.body;
+            const { is_active } = req.body;
 
             if (is_active === undefined) {
                 res.status(400).json({
@@ -227,12 +163,7 @@ export class AdminUsersController {
                 return;
             }
 
-            const updatedUser = await pgpDb.one(`
-                UPDATE customer
-                SET is_active = $2, updated_at = CURRENT_TIMESTAMP
-                WHERE id = $1
-                RETURNING *
-            `, [userId, is_active]);
+            const updatedUser = await AdminUsersRepository.updateStatus(userId, is_active);
 
             res.status(200).json({
                 status: true,
@@ -262,17 +193,7 @@ export class AdminUsersController {
             const lang = req.lang || 'en';
             const userId = parseInt((req.params as { id: string }).id);
 
-            const transactions = await pgpDb.any(`
-                SELECT
-                    wt.*,
-                    c.first_name,
-                    c.last_name,
-                    c.email
-                FROM wallet_transaction wt
-                JOIN customer c ON wt.customer_id = c.id
-                WHERE wt.customer_id = $1
-                ORDER BY wt.created_at DESC
-            `, [userId]);
+            const transactions = await AdminUsersRepository.getTransactions(userId);
 
             res.status(200).json({
                 status: true,
@@ -300,26 +221,7 @@ export class AdminUsersController {
             const lang = req.lang || 'en';
             const userId = parseInt((req.params as { id: string }).id);
 
-            const tickets = await pgpDb.any(`
-                SELECT
-                    et.*,
-                    json_build_object(
-                        'id', e.id,
-                        'title', e.title,
-                        'event_code', e.event_code,
-                        'event_date', e.event_date
-                    ) AS event,
-                    json_build_object(
-                        'id', ett.id,
-                        'name', ett.name
-                    ) AS ticket_type
-                FROM event_ticket et
-                JOIN event e ON et.event_id = e.id
-                LEFT JOIN event_ticket_type ett ON et.ticket_type_id = ett.id
-                WHERE et.customer_id = $1
-                AND et.is_deleted = FALSE
-                ORDER BY et.created_at DESC
-            `, [userId]);
+            const tickets = await AdminUsersRepository.getTickets(userId);
 
             res.status(200).json({
                 status: true,
@@ -347,17 +249,7 @@ export class AdminUsersController {
             const lang = req.lang || 'en';
             const userId = parseInt((req.params as { id: string }).id);
 
-            const wallet = await pgpDb.oneOrNone(`
-                SELECT
-                    w.*,
-                    COUNT(wt.id)::int AS transaction_count,
-                    COALESCE(SUM(wt.amount) FILTER (WHERE wt.type = 'credit'), 0)::int AS total_credits,
-                    COALESCE(SUM(wt.amount) FILTER (WHERE wt.type = 'debit'), 0)::int AS total_debits
-                FROM wallet w
-                LEFT JOIN wallet_transaction wt ON w.customer_id = wt.customer_id
-                WHERE w.customer_id = $1
-                GROUP BY w.id, w.customer_id, w.balance, w.created_at, w.updated_at
-            `, [userId]);
+            const wallet = await AdminUsersRepository.getWallet(userId);
 
             if (!wallet) {
                 res.status(404).json({

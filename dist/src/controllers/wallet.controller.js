@@ -17,6 +17,14 @@ class WalletController {
                 });
                 return;
             }
+            if (req.userId !== customerId) {
+                res.status(403).json({
+                    status: false,
+                    message: "You can only access your own wallet",
+                    code: 403
+                });
+                return;
+            }
             const result = await wallet_repository_1.WalletRepository.getBalance(customerId);
             res.status(result.code).json(result);
         }
@@ -39,6 +47,28 @@ class WalletController {
                 res.status(400).json({
                     status: false,
                     message: i18n_1.I18n.t('invalid_id', lang),
+                    code: 400
+                });
+                return;
+            }
+            if (req.userId !== customerId) {
+                res.status(403).json({
+                    status: false,
+                    message: "You can only top up your own wallet",
+                    code: 403
+                });
+                return;
+            }
+            // Orange Money now has a real, verified top-up path — see
+            // POST /v1/api/payments/orange-money/wallet-topup. This endpoint
+            // credits the wallet purely on the client's word (amount/reference
+            // come straight from the body, unverified), so it must stay
+            // restricted to methods that don't move real money through us
+            // (cash collected in person, or an admin adjustment).
+            if (topUpData.payment_method === 'orangeMoney' || topUpData.payment_method === 'mtn') {
+                res.status(400).json({
+                    status: false,
+                    message: "Use POST /v1/api/payments/orange-money/wallet-topup for Orange Money — this endpoint only accepts cash/manual top-ups.",
                     code: 400
                 });
                 return;
@@ -83,6 +113,14 @@ class WalletController {
                     status: false,
                     message: i18n_1.I18n.t('invalid_id', lang),
                     code: 400
+                });
+                return;
+            }
+            if (req.userId !== customerId) {
+                res.status(403).json({
+                    status: false,
+                    message: "You can only access your own wallet",
+                    code: 403
                 });
                 return;
             }

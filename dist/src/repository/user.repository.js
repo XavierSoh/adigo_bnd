@@ -9,10 +9,11 @@ const pgdb_1 = __importDefault(require("../config/pgdb"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const table_names_1 = require("../utils/table_names");
+const env_1 = require("../utils/env");
 class UserRepository {
     static async create(user) {
         try {
-            const hashedPassword = await bcrypt_1.default.hash(user.password, parseInt(process.env.SALT));
+            const hashedPassword = await bcrypt_1.default.hash(user.password, parseInt(process.env.SALT || '10', 10));
             const result = await pgdb_1.default.oneOrNone(`
                 INSERT INTO ${table_names_1.kUsers} (
                     login, password, account_status, language, role, creation_date
@@ -33,7 +34,8 @@ class UserRepository {
                 id: result.id,
                 email: result.login,
                 role: result.role
-            }, process.env.JWT_SECRET);
+            }, (0, env_1.requireEnv)('JWT_SECRET'), { expiresIn: '24h' } // Token valide pour 24 heures (aligné avec update())
+            );
             return {
                 status: true,
                 message: 'User successfully created',
@@ -88,7 +90,7 @@ class UserRepository {
                 email: user.login,
                 role: user.role,
                 profile: user.profile
-            }, process.env.JWT_SECRET, { expiresIn: '24h' } // Token valide pour 24 heures
+            }, (0, env_1.requireEnv)('JWT_SECRET'), { expiresIn: '24h' } // Token valide pour 24 heures
             );
             const updatedUser = await pgdb_1.default.oneOrNone(`
                 UPDATE ${table_names_1.kUsers} 
@@ -185,7 +187,7 @@ class UserRepository {
             // Si le mot de passe est fourni, le hasher
             let hashedPassword;
             if (safeUpdates.password) {
-                hashedPassword = await bcrypt_1.default.hash(safeUpdates.password, parseInt(process.env.SALT));
+                hashedPassword = await bcrypt_1.default.hash(safeUpdates.password, parseInt(process.env.SALT || '10', 10));
                 safeUpdates.password = hashedPassword;
             }
             const setClause = Object.keys(safeUpdates)

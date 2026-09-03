@@ -6,6 +6,9 @@
 import { Request, Response } from 'express';
 import rideService from '../../services/vtc/ride.service';
 import { CreateRideDto, RateRideDto, CancelRideDto } from '../../models/vtc/ride.model';
+import { SocketService } from '../../services/socket.service';
+import { WalletRepository } from '../../repository/wallet.repository';
+import { I18n } from '../../utils/i18n';
 
 export class RideController {
   /**
@@ -50,9 +53,64 @@ export class RideController {
    */
   async createRide(req: Request, res: Response): Promise<Response> {
     try {
-      const data: CreateRideDto = req.body;
+      if (!req.userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
 
-      const ride = await rideService.createRide(data);
+      // customerId always comes from the authenticated token, never from
+      // the request body — same reasoning as the wallet/ticketing fixes.
+      const data: CreateRideDto = { ...req.body, customerId: req.userId };
+
+      // Same pattern as booking.controller.ts: pre-check the wallet balance
+      // *before* creating anything when paying by wallet, so an
+      // insufficient balance blocks the request cleanly instead of leaving
+      // an unpaid ride behind.
+      if (data.paymentMethod === 'wallet') {
+        const estimate = await rideService.estimateRide(
+          data.pickupLatitude, data.pickupLongitude,
+          data.dropoffLatitude, data.dropoffLongitude,
+          data.vehicleType
+        );
+        const balanceCheck = await WalletRepository.getBalance(req.userId);
+        const currentBalance = balanceCheck.status ? (balanceCheck.body?.wallet_balance ?? 0) : 0;
+
+        if (currentBalance < estimate.totalFare) {
+          return res.status(400).json({
+            success: false,
+            message: I18n.t('insufficient_wallet_balance', req.lang, {
+              current: currentBalance.toString(),
+              required: estimate.totalFare.toString()
+            })
+          });
+        }
+      }
+
+      const ride: any = await rideService.createRide(data);
+
+      // Charge the wallet now that the ride exists. If this fails (balance
+      // moved between the check above and here), cancel the just-created
+      // ride rather than leaving one on the books that was never paid.
+      if (data.paymentMethod === 'wallet' && ride.total_fare > 0) {
+        const paymentResult = await WalletRepository.recordPayment(
+          req.userId,
+          ride.total_fare,
+          `Course VTC #${ride.id}`
+        );
+        if (!paymentResult.status) {
+          await rideService.cancelRide(ride.id, { reason: 'Paiement wallet échoué', cancelledBy: 'system' });
+          return res.status(400).json({
+            success: false,
+            message: paymentResult.message || I18n.t('insufficient_wallet_balance', req.lang, {
+              current: '?',
+              required: ride.total_fare.toString()
+            })
+          });
+        }
+        const paid: any = await rideService.markPaymentCompleted(ride.id);
+        ride.payment_status = paid?.payment_status ?? 'completed';
+      }
+
+      SocketService.broadcastNewRideRequested(ride);
 
       return res.status(201).json({
         success: true,
@@ -102,16 +160,13 @@ export class RideController {
    */
   async getCustomerRides(req: Request, res: Response): Promise<Response> {
     try {
-      const customerId = parseInt(req.query.customerId as string);
-
-      if (!customerId) {
-        return res.status(400).json({
-          success: false,
-          message: 'Customer ID is required'
-        });
+      if (!req.userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
       }
 
-      const rides = await rideService.getCustomerRides(customerId);
+      // Always the authenticated customer's own rides — a ?customerId=
+      // query param would otherwise let anyone read anyone else's ride history.
+      const rides = await rideService.getCustomerRides(req.userId);
 
       return res.json({
         success: true,
@@ -135,7 +190,33 @@ export class RideController {
       const rideId = parseInt((req.params as { id: string }).id);
       const data: CancelRideDto = req.body;
 
-      const ride = await rideService.cancelRide(rideId, data);
+      const ride: any = await rideService.cancelRide(rideId, data);
+
+      if (!ride) {
+        // cancelRide's WHERE guards against re-cancelling an already
+        // cancelled ride (so it can't be refunded twice) — distinguish
+        // that from a genuinely missing ride id.
+        const existing = await rideService.getRideById(rideId);
+        if (!existing) {
+          return res.status(404).json({ success: false, message: 'Ride not found' });
+        }
+        return res.status(400).json({ success: false, message: 'Course déjà annulée' });
+      }
+      SocketService.broadcastRideStatusChanged(ride);
+
+      // Cancellation always refunds to the wallet, regardless of the
+      // original payment method (cash, mobile money, or wallet) — same
+      // deliberate business decision already applied to booking
+      // cancellations (see BOOKING_MODULE_NOTES.md): there's no automated
+      // way to reverse a cash/mobile-money charge through the app, so
+      // crediting the wallet is how the refund actually reaches the client.
+      if (ride.total_fare > 0) {
+        await WalletRepository.recordRefund(
+          ride.customer_id,
+          ride.total_fare,
+          `Remboursement course VTC annulée #${ride.id} (payée via ${ride.payment_method})`
+        );
+      }
 
       return res.json({
         success: true,
@@ -144,6 +225,99 @@ export class RideController {
     } catch (error: any) {
       console.error('Error cancelling ride:', error);
       return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/rides/admin/all
+   * Admin dashboard listing — used to find rides needing a driver assigned
+   * by hand, since there's no automatic matching yet. ?customerId= lets the
+   * desktop "Courses VTC" button on a customer's file show just their rides.
+   */
+  async getAllRides(req: Request, res: Response): Promise<Response> {
+    try {
+      const status = req.query.status as string | undefined;
+      const customerId = req.query.customerId ? parseInt(req.query.customerId as string) : undefined;
+      const driverId = req.query.driverId ? parseInt(req.query.driverId as string) : undefined;
+      const rides = await rideService.getAllRides(status, customerId, driverId);
+
+      return res.json({
+        success: true,
+        data: rides
+      });
+    } catch (error: any) {
+      console.error('Error listing rides:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * PUT /v1/api/vtc/rides/:id/assign
+   * Admin assigns a driver to a pending ride.
+   */
+  async assignDriver(req: Request, res: Response): Promise<Response> {
+    try {
+      const rideId = parseInt((req.params as { id: string }).id);
+      const { driverId } = req.body;
+
+      if (!driverId) {
+        return res.status(400).json({ success: false, message: 'driverId is required' });
+      }
+
+      const ride = await rideService.assignDriver(rideId, driverId);
+
+      if (!ride) {
+        return res.status(409).json({
+          success: false,
+          message: 'Course introuvable ou déjà attribuée'
+        });
+      }
+      SocketService.broadcastRideStatusChanged(ride);
+
+      return res.json({
+        success: true,
+        data: ride
+      });
+    } catch (error: any) {
+      console.error('Error assigning driver:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * PUT /v1/api/vtc/rides/:id/status
+   * Advance a ride through its lifecycle (accepted → arrived → started →
+   * completed). Used by the driver mode and by admin as a manual override.
+   */
+  async updateStatus(req: Request, res: Response): Promise<Response> {
+    try {
+      const rideId = parseInt((req.params as { id: string }).id);
+      const { status } = req.body;
+
+      if (!status) {
+        return res.status(400).json({ success: false, message: 'status is required' });
+      }
+
+      const ride = await rideService.updateRideStatus(rideId, status);
+
+      if (!ride) {
+        return res.status(404).json({ success: false, message: 'Ride not found' });
+      }
+      SocketService.broadcastRideStatusChanged(ride);
+
+      return res.json({ success: true, data: ride });
+    } catch (error: any) {
+      console.error('Error updating ride status:', error);
+      return res.status(400).json({
         success: false,
         message: error.message
       });
@@ -160,6 +334,10 @@ export class RideController {
       const { ratedBy, ...data } = req.body;
 
       const ride = await rideService.rateRide(rideId, ratedBy, data as RateRideDto);
+
+      if (!ride) {
+        return res.status(404).json({ success: false, message: 'Ride not found' });
+      }
 
       return res.json({
         success: true,

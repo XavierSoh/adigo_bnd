@@ -19,6 +19,20 @@ export class WalletController {
                 return;
             }
 
+            // A customer token can only read its own wallet; a staff token
+            // (req.userRole set) may read any customer's balance — needed
+            // for the desktop counter-booking screen to show/validate a
+            // client's wallet balance when staff pick "Portefeuille Adigo"
+            // as the payment method.
+            if (!req.userRole && req.userId !== customerId) {
+                res.status(403).json({
+                    status: false,
+                    message: "You can only access your own wallet",
+                    code: 403
+                });
+                return;
+            }
+
             const result = await WalletRepository.getBalance(customerId);
             res.status(result.code).json(result);
         } catch (error) {
@@ -42,6 +56,35 @@ export class WalletController {
                 res.status(400).json({
                     status: false,
                     message: I18n.t('invalid_id', lang),
+                    code: 400
+                });
+                return;
+            }
+
+            // Same staff-token exception as getBalance: a customer can only
+            // top up its own wallet, but staff need this to record a cash
+            // deposit a client hands over at the counter — that's exactly
+            // what this cash/manual-only endpoint is for (see the check
+            // below).
+            if (!req.userRole && req.userId !== customerId) {
+                res.status(403).json({
+                    status: false,
+                    message: "You can only top up your own wallet",
+                    code: 403
+                });
+                return;
+            }
+
+            // Orange Money now has a real, verified top-up path — see
+            // POST /v1/api/payments/orange-money/wallet-topup. This endpoint
+            // credits the wallet purely on the client's word (amount/reference
+            // come straight from the body, unverified), so it must stay
+            // restricted to methods that don't move real money through us
+            // (cash collected in person, or an admin adjustment).
+            if (topUpData.payment_method === 'orangeMoney' || topUpData.payment_method === 'mtn') {
+                res.status(400).json({
+                    status: false,
+                    message: "Use POST /v1/api/payments/orange-money/wallet-topup for Orange Money — this endpoint only accepts cash/manual top-ups.",
                     code: 400
                 });
                 return;
@@ -96,6 +139,17 @@ export class WalletController {
                     status: false,
                     message: I18n.t('invalid_id', lang),
                     code: 400
+                });
+                return;
+            }
+
+            // Same staff-token exception as getBalance — lets the desktop
+            // wallet-history screen show any client's transactions.
+            if (!req.userRole && req.userId !== customerId) {
+                res.status(403).json({
+                    status: false,
+                    message: "You can only access your own wallet",
+                    code: 403
                 });
                 return;
             }

@@ -1,4 +1,6 @@
-import pgpDb from "../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../utils/prisma-compat";
 import {
     kConversations,
     kMessages,
@@ -31,7 +33,7 @@ export class ChatRepository {
     static async createConversation(data: CreateConversationDTO): Promise<Conversation> {
         const { customer_id, subject, tags, initial_message } = data;
 
-        const conversation = await pgpDb.one<Conversation>(
+        const conversation = await pgOne<Conversation>(
             `INSERT INTO ${kConversations} (
                 customer_id, subject, tags, status
             ) VALUES ($1, $2, $3, $4)
@@ -58,7 +60,7 @@ export class ChatRepository {
      */
     static async getConversationById(id: number): Promise<Conversation | null> {
         try {
-            const conversation = await pgpDb.one<Conversation>(
+            const conversation = await pgOne<Conversation>(
                 `SELECT c.*,
                     CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
                     u.login as admin_name,
@@ -87,7 +89,7 @@ export class ChatRepository {
         const statusFilter = status ? 'AND c.status = $2' : '';
         const params = status ? [customerId, status] : [customerId];
 
-        return await pgpDb.manyOrNone<Conversation>(
+        return await pgAny<Conversation>(
             `SELECT c.*,
                 CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
                 u.login as admin_name,
@@ -113,7 +115,7 @@ export class ChatRepository {
         const statusFilter = status ? 'AND c.status = $2' : '';
         const params = status ? [adminId, status] : [adminId];
 
-        return await pgpDb.manyOrNone<Conversation>(
+        return await pgAny<Conversation>(
             `SELECT c.*,
                 CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
                 u.login as admin_name,
@@ -133,7 +135,7 @@ export class ChatRepository {
      * Récupérer toutes les conversations ouvertes (non assignées)
      */
     static async getOpenConversations(): Promise<Conversation[]> {
-        return await pgpDb.manyOrNone<Conversation>(
+        return await pgAny<Conversation>(
             `SELECT c.*,
                 CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
                 COUNT(m.id) as message_count
@@ -195,7 +197,7 @@ export class ChatRepository {
         values.push(id);
 
         try {
-            return await pgpDb.one<Conversation>(
+            return await pgOne<Conversation>(
                 `UPDATE ${kConversations}
                 SET ${fields.join(', ')}
                 WHERE id = $${paramIndex} AND is_deleted = FALSE
@@ -214,7 +216,7 @@ export class ChatRepository {
         conversationId: number,
         adminId: number
     ): Promise<boolean> {
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kConversations}
             SET assigned_to = $1, updated_at = CURRENT_TIMESTAMP
             WHERE id = $2 AND is_deleted = FALSE`,
@@ -227,7 +229,7 @@ export class ChatRepository {
      * Supprimer une conversation (soft delete)
      */
     static async deleteConversation(id: number, deletedBy: number): Promise<boolean> {
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kConversations}
             SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP, deleted_by = $1
             WHERE id = $2`,
@@ -254,7 +256,7 @@ export class ChatRepository {
             metadata,
         } = data;
 
-        const message = await pgpDb.one<Message>(
+        const message = await pgOne<Message>(
             `INSERT INTO ${kMessages} (
                 conversation_id, sender_type, sender_id, sender_name,
                 message_type, content, metadata
@@ -272,7 +274,7 @@ export class ChatRepository {
         );
 
         // Mettre à jour la conversation
-        await pgpDb.none(
+        await pgNone(
             `UPDATE ${kConversations}
             SET last_message_at = CURRENT_TIMESTAMP,
                 last_message_preview = $1,
@@ -297,7 +299,7 @@ export class ChatRepository {
         const limitClause = limit ? `LIMIT ${limit}` : '';
         const offsetClause = offset ? `OFFSET ${offset}` : '';
 
-        return await pgpDb.manyOrNone<Message>(
+        return await pgAny<Message>(
             `SELECT * FROM ${kMessages}
             WHERE conversation_id = $1 AND is_deleted = FALSE
             ORDER BY created_at ASC
@@ -327,7 +329,7 @@ export class ChatRepository {
      * Marquer un message comme lu
      */
     static async markMessageAsRead(messageId: number): Promise<boolean> {
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kMessages}
             SET is_read = TRUE, read_at = CURRENT_TIMESTAMP
             WHERE id = $1 AND is_read = FALSE`,
@@ -344,7 +346,7 @@ export class ChatRepository {
         forUser: 'customer' | 'admin'
     ): Promise<number> {
         // Marquer les messages comme lus
-        await pgpDb.none(
+        await pgNone(
             `UPDATE ${kMessages}
             SET is_read = TRUE, read_at = CURRENT_TIMESTAMP
             WHERE conversation_id = $1
@@ -355,7 +357,7 @@ export class ChatRepository {
 
         // Réinitialiser le compteur de non-lus
         const field = forUser === 'customer' ? 'unread_count_customer' : 'unread_count_admin';
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kConversations}
             SET ${field} = 0
             WHERE id = $1`,
@@ -369,7 +371,7 @@ export class ChatRepository {
      * Supprimer un message (soft delete)
      */
     static async deleteMessage(id: number): Promise<boolean> {
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kMessages}
             SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP
             WHERE id = $1`,
@@ -418,7 +420,7 @@ export class ChatRepository {
 
         values.push(messageId);
 
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kMessages}
             SET ${fields.join(', ')}
             WHERE id = $${paramIndex}`,
@@ -448,7 +450,7 @@ export class ChatRepository {
             created_by,
         } = data;
 
-        return await pgpDb.one<QuickReply>(
+        return await pgOne<QuickReply>(
             `INSERT INTO ${kQuickReplies} (
                 title, action_type, payload, icon, color, display_order,
                 requires_auth, user_role, created_by
@@ -477,7 +479,7 @@ export class ChatRepository {
             : '';
         const params = userRole ? [userRole] : [];
 
-        return await pgpDb.manyOrNone<QuickReply>(
+        return await pgAny<QuickReply>(
             `SELECT * FROM ${kQuickReplies}
             WHERE is_active = TRUE ${roleFilter}
             ORDER BY display_order ASC, created_at ASC`,
@@ -490,7 +492,7 @@ export class ChatRepository {
      */
     static async getQuickReplyById(id: number): Promise<QuickReply | null> {
         try {
-            return await pgpDb.one<QuickReply>(
+            return await pgOne<QuickReply>(
                 `SELECT * FROM ${kQuickReplies} WHERE id = $1`,
                 [id]
             );
@@ -505,7 +507,7 @@ export class ChatRepository {
     static async getQuickRepliesByIds(ids: number[]): Promise<QuickReply[]> {
         if (ids.length === 0) return [];
 
-        return await pgpDb.manyOrNone<QuickReply>(
+        return await pgAny<QuickReply>(
             `SELECT * FROM ${kQuickReplies}
             WHERE id = ANY($1) AND is_active = TRUE
             ORDER BY display_order ASC`,
@@ -536,7 +538,7 @@ export class ChatRepository {
             created_by,
         } = data;
 
-        return await pgpDb.one<AIResponse>(
+        return await pgOne<AIResponse>(
             `INSERT INTO ${kAIResponses} (
                 intent, keywords, pattern, response_template, response_type, language,
                 quick_reply_ids, priority, confidence_threshold,
@@ -564,7 +566,7 @@ export class ChatRepository {
      * Récupérer toutes les réponses IA actives
      */
     static async getActiveAIResponses(): Promise<AIResponse[]> {
-        return await pgpDb.manyOrNone<AIResponse>(
+        return await pgAny<AIResponse>(
             `SELECT * FROM ${kAIResponses}
             WHERE is_active = TRUE
             ORDER BY priority DESC, created_at ASC`
@@ -575,7 +577,7 @@ export class ChatRepository {
      * Récupérer les réponses IA par intent
      */
     static async getAIResponsesByIntent(intent: AIIntent): Promise<AIResponse[]> {
-        return await pgpDb.manyOrNone<AIResponse>(
+        return await pgAny<AIResponse>(
             `SELECT * FROM ${kAIResponses}
             WHERE intent = $1 AND is_active = TRUE
             ORDER BY priority DESC`,
@@ -587,7 +589,7 @@ export class ChatRepository {
      * Incrémenter le compteur d'utilisation d'une réponse IA
      */
     static async incrementAIResponseUsage(id: number): Promise<boolean> {
-        const result = await pgpDb.result(
+        const result = await pgResult(
             `UPDATE ${kAIResponses}
             SET usage_count = usage_count + 1
             WHERE id = $1`,
@@ -604,7 +606,7 @@ export class ChatRepository {
      * Récupérer les statistiques générales du chat
      */
     static async getChatStatistics() {
-        const stats = await pgpDb.one(
+        const stats = await pgOne(
             `SELECT
                 COUNT(*) as total_conversations,
                 COUNT(*) FILTER (WHERE status = 'open') as open_conversations,
@@ -617,7 +619,7 @@ export class ChatRepository {
             WHERE is_deleted = FALSE`
         );
 
-        const messageStats = await pgpDb.one(
+        const messageStats = await pgOne(
             `SELECT
                 COUNT(*) as total_messages,
                 COUNT(*) FILTER (WHERE sender_type = 'customer') as customer_messages,

@@ -88,6 +88,20 @@ export interface CancelRideDto {
 }
 
 /**
+ * Valid ride status transitions, enforced by RideService.updateRideStatus.
+ * No skipping a step and no going backwards — 'cancelled' is reachable from
+ * any non-terminal state via the separate /cancel endpoint, not this map.
+ */
+export const RIDE_STATUS_TRANSITIONS: Record<string, string[]> = {
+  requested: ['accepted'],
+  accepted: ['arrived'],
+  arrived: ['started'],
+  started: ['completed'],
+  completed: [],
+  cancelled: [],
+};
+
+/**
  * Status Mapping Helpers
  * Convert between frontend Flutter and backend statuses
  */

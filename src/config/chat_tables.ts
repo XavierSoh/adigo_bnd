@@ -1,5 +1,5 @@
-import pgpDb from "./pgdb";
-import pgp from 'pg-promise';
+import { pgNone } from "../utils/prisma-compat";
+import { Client } from 'pg';
 
 /**
  * Tables pour le système de messagerie en temps réel
@@ -21,10 +21,13 @@ export const kAIResponses = "ai_responses";
  * Note: Cette fonction nécessite une connexion à la base 'postgres'
  */
 export async function createChatDatabaseIfNotExists(dbName: string): Promise<void> {
-    const pgpInstance = pgp();
-
-    // Connexion à la base postgres par défaut pour créer d'autres bases
-    const db = pgpInstance({
+    // Prisma's client is bound to DATABASE_URL (the adigo_db database
+    // itself) — it can't be used here, since this must connect to the
+    // 'postgres' admin database *before* adigo_db necessarily exists, to
+    // create it. Plain `pg` (already a shared dependency of pg-promise and
+    // @prisma/adapter-pg) is the right tool for this one bootstrap step,
+    // not either ORM layer.
+    const client = new Client({
         user: process.env.DB_USER,
         host: process.env.DB_HOST,
         database: 'postgres', // Connexion à la base par défaut
@@ -33,15 +36,17 @@ export async function createChatDatabaseIfNotExists(dbName: string): Promise<voi
     });
 
     try {
+        await client.connect();
+
         // Vérifier si la base existe
-        const exists = await db.oneOrNone(
+        const exists = await client.query(
             'SELECT 1 FROM pg_database WHERE datname = $1',
             [dbName]
         );
 
-        if (!exists) {
+        if (exists.rows.length === 0) {
             // Créer la base de données si elle n'existe pas
-            await db.none(`CREATE DATABASE ${dbName}`);
+            await client.query(`CREATE DATABASE ${dbName}`);
             console.log(`✅ Base de données "${dbName}" créée avec succès`);
         } else {
             console.log(`ℹ️  Base de données "${dbName}" existe déjà`);
@@ -50,7 +55,7 @@ export async function createChatDatabaseIfNotExists(dbName: string): Promise<voi
         console.error(`❌ Erreur lors de la création de la base de données "${dbName}":`, error);
         // Ne pas propager l'erreur si la base existe déjà
     } finally {
-        await db.$pool.end();
+        await client.end();
     }
 }
 
@@ -262,7 +267,7 @@ export const chatTables = [
 export default async function createChatTables(): Promise<void> {
     try {
         for (const table of chatTables) {
-            await pgpDb.none(table.query);
+            await pgNone(table.query);
         }
         console.log('✅ Tables de chat créées avec succès');
     } catch (error) {

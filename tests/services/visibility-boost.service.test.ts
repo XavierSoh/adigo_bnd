@@ -1,4 +1,4 @@
-import { VisibilityBoostService } from '../../src/services/visibility-boost.service';
+import { VisibilityBoostService } from '../../src/ticketing/services/visibility-boost.service';
 import pgpDb from '../../src/config/pgdb';
 
 jest.mock('../../src/config/pgdb');

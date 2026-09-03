@@ -33,6 +33,9 @@ import ticketingRouter from './routes/ticketing';
 import vtcRouter from './routes/vtc.router';
 import foodRouter from './routes/food.router';
 import parcelRouter from './routes/parcel.router';
+import paymentRouter from './routes/payment.router';
+import './services/payment/providers';
+import './services/payment/settlement-handlers';
 
 const app = express();
 
@@ -91,6 +94,9 @@ app.use('/v1/api/food', foodRouter);
 
 // Parcel Delivery Module
 app.use('/v1/api/parcel', parcelRouter);
+
+// Payments (Orange Money)
+app.use('/v1/api/payments', paymentRouter);
 
 // ✅ Initialiser la base de données de manière asynchrone
 export async function initializeApp() {

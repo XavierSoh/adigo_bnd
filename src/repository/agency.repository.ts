@@ -1,39 +1,31 @@
- 
-import pgpDb from "../config/pgdb";
+// Migrated to Prisma's native model API (prisma.agency.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration").
+import { Prisma } from "@prisma/client";
+import prismaDb from "../config/prismaClient";
 import { AgencyModel } from "../models/agency.model";
 import ResponseModel from "../models/response.model";
-import { kAgency } from "../utils/table_names";
 
- 
 export class AgencyRepository {
-    
+
     static async create(agency: AgencyModel): Promise<ResponseModel> {
         try {
-            // Nettoyer et formater custom_hours
-            let customHours: string | null = null;
-            
-            if (agency.custom_hours) {
-                customHours = JSON.stringify(agency.custom_hours);
-            }
-
-            const result = await pgpDb.oneOrNone(
-                `INSERT INTO ${kAgency} (
-                    name, address, cities_served, phone, email, 
-                    logo, opening_hours, custom_hours, created_by
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
-                RETURNING *`,
-                [
-                    agency.name,
-                    agency.address,
-                    agency.cities_served,
-                    agency.phone || null,
-                    agency.email || null,
-                    agency.logo || null,
-                    agency.opening_hours,
-                    customHours,
-                    agency.created_by
-                ]
-            );
+            const result = await prismaDb.agency.create({
+                data: {
+                    name: agency.name,
+                    address: agency.address,
+                    cities_served: agency.cities_served,
+                    phone: agency.phone || null,
+                    email: agency.email || null,
+                    logo: agency.logo || null,
+                    opening_hours: agency.opening_hours,
+                    // `custom_hours` is a native Json column — pass the
+                    // object directly (Prisma serializes it), not a
+                    // pre-stringified string like the raw-SQL `::jsonb`
+                    // cast needed.
+                    custom_hours: agency.custom_hours ?? undefined,
+                    created_by: agency.created_by,
+                },
+            });
 
             return {
                 status: true,
@@ -54,17 +46,14 @@ export class AgencyRepository {
 
     static async update(id: number, agencyData: Partial<AgencyModel>): Promise<ResponseModel> {
         try {
-            // Créer une copie pour manipulation
             const updates: Record<string, any> = { ...agencyData };
-            
-            // Exclure les champs non modifiables
+
             delete updates.id;
             delete updates.created_by;
             delete updates.is_deleted;
             delete updates.deleted_at;
             delete updates.deleted_by;
 
-            // Nettoyer les valeurs vides pour les champs optionnels
             if (updates.logo === null || updates.logo === undefined || updates.logo === '') {
                 delete updates.logo;
             }
@@ -72,20 +61,21 @@ export class AgencyRepository {
                 delete updates.email;
             }
 
-            // Traiter custom_hours
             if ('custom_hours' in updates) {
                 if (updates.custom_hours === null || updates.custom_hours === undefined) {
                     delete updates.custom_hours;
                 } else if (typeof updates.custom_hours === 'string') {
-                    // Si c'est une chaîne vide, on la supprime
                     if (updates.custom_hours.trim() === '') {
                         delete updates.custom_hours;
+                    } else {
+                        // Was a raw string cast via `::jsonb` before — Prisma's
+                        // Json field needs an actual JS value, not a JSON-text
+                        // string (else it'd store a jsonb *string scalar*
+                        // containing that text, not the parsed object).
+                        updates.custom_hours = JSON.parse(updates.custom_hours);
                     }
-                    // Sinon on garde la chaîne (doit être du JSON valide)
-                } else {
-                    // Si c'est un objet, le convertir en JSON
-                    updates.custom_hours = JSON.stringify(updates.custom_hours);
                 }
+                // else: already an object — pass through as-is for Prisma's Json field.
             }
 
             if (Object.keys(updates).length === 0) {
@@ -96,39 +86,19 @@ export class AgencyRepository {
                 };
             }
 
-            // Construire la requête dynamiquement
-            const setClauses: string[] = [];
-            const params: any[] = [id];
-            let paramIndex = 2;
+            const result = await prismaDb.agency.updateMany({
+                where: { id, is_deleted: false },
+                data: updates as Prisma.agencyUncheckedUpdateInput,
+            });
 
-            for (const [key, value] of Object.entries(updates)) {
-                if (key === 'custom_hours') {
-                    setClauses.push(`${key} = $${paramIndex}::jsonb`);
-                } else if (key === 'cities_served') {
-                    setClauses.push(`${key} = $${paramIndex}::text[]`);
-                } else {
-                    setClauses.push(`${key} = $${paramIndex}`);
-                }
-                params.push(value);
-                paramIndex++;
-            }
-
-            const query = `
-                UPDATE ${kAgency}
-                SET ${setClauses.join(', ')}
-                WHERE id = $1 AND is_deleted = false
-                RETURNING *
-            `;
-
-            const updatedAgency = await pgpDb.oneOrNone(query, params);
-
-            if (!updatedAgency) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Agence non trouvée ou déjà supprimée",
                     code: 404
                 };
             }
+            const updatedAgency = await prismaDb.agency.findUnique({ where: { id } });
 
             return {
                 status: true,
@@ -147,20 +117,12 @@ export class AgencyRepository {
         }
     }
 
-    
-
-     
-
-    
- 
-
     static async findAll(includeDeleted = false): Promise<ResponseModel> {
         try {
-            let query = `SELECT * FROM ${kAgency} `;
-             query += ` WHERE is_deleted = ${includeDeleted}`;
-            
-            query += " ORDER BY name ASC"; // Optionnel : trier par nom
-            const agencies = await pgpDb.manyOrNone(query);
+            const agencies = await prismaDb.agency.findMany({
+                where: { is_deleted: includeDeleted },
+                orderBy: { name: 'asc' },
+            });
             return {
                 status: true,
                 message: 'Agences récupérées',
@@ -179,11 +141,10 @@ export class AgencyRepository {
 
     static async findById(id: number, includeDeleted = false): Promise<ResponseModel> {
         try {
-            let query = `SELECT * FROM ${kAgency} WHERE id = $1`;
-            if (!includeDeleted) query += " AND is_deleted = false";
-            
-            const agency = await pgpDb.oneOrNone(query, [id]);
-            
+            const agency = await prismaDb.agency.findFirst({
+                where: includeDeleted ? { id } : { id, is_deleted: false },
+            });
+
             if (!agency) {
                 return {
                     status: false,
@@ -208,33 +169,26 @@ export class AgencyRepository {
         }
     }
 
-    
-
     static async softDelete(id: number, deletedBy: number): Promise<ResponseModel> {
         try {
-            const query = `
-                UPDATE ${kAgency}
-                SET is_deleted = true, 
-                    deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = $2
-                WHERE id = $1 AND is_deleted = false
-                RETURNING id, name
-            `;
-            
-            const result = await pgpDb.oneOrNone(query, [id, deletedBy]);
+            const result = await prismaDb.agency.updateMany({
+                where: { id, is_deleted: false },
+                data: { is_deleted: true, deleted_at: new Date(), deleted_by: deletedBy },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Agence non trouvée ou déjà supprimée",
                     code: 404
                 };
             }
+            const body = await prismaDb.agency.findUnique({ where: { id }, select: { id: true, name: true } });
 
             return {
                 status: true,
                 message: "Agence supprimée (soft delete)",
-                body: result,
+                body,
                 code: 200
             };
         } catch (error) {
@@ -249,21 +203,7 @@ export class AgencyRepository {
 
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const query = `
-                DELETE FROM ${kAgency}
-                WHERE id = $1
-                RETURNING id, name
-            `;
-            
-            const result = await pgpDb.oneOrNone(query, [id]);
-
-            if (!result) {
-                return {
-                    status: false,
-                    message: "Agence non trouvée",
-                    code: 404
-                };
-            }
+            const result = await prismaDb.agency.delete({ where: { id }, select: { id: true, name: true } });
 
             return {
                 status: true,
@@ -272,6 +212,9 @@ export class AgencyRepository {
                 code: 200
             };
         } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+                return { status: false, message: "Agence non trouvée", code: 404 };
+            }
             return {
                 status: false,
                 message: "Erreur lors de la suppression",
@@ -283,29 +226,24 @@ export class AgencyRepository {
 
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const query = `
-                UPDATE ${kAgency}
-                SET is_deleted = false,
-                    deleted_at = NULL,
-                    deleted_by = NULL
-                WHERE id = $1 AND is_deleted = true
-                RETURNING id, name
-            `;
-            
-            const result = await pgpDb.oneOrNone(query, [id]);
+            const result = await prismaDb.agency.updateMany({
+                where: { id, is_deleted: true },
+                data: { is_deleted: false, deleted_at: null, deleted_by: null },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return {
                     status: false,
                     message: "Agence non trouvée ou non supprimée",
                     code: 404
                 };
             }
+            const body = await prismaDb.agency.findUnique({ where: { id }, select: { id: true, name: true } });
 
             return {
                 status: true,
                 message: "Agence restaurée",
-                body: result,
+                body,
                 code: 200
             };
         } catch (error) {
@@ -318,71 +256,58 @@ export class AgencyRepository {
             };
         }
     }
- 
- 
 
-static async bulkCreate(agencies: AgencyModel[]): Promise<ResponseModel> {
-  try {
-    if (!agencies.length) {
-      return {
-        status: false,
-        message: "Aucune agence à créer",
-        code: 400
-      };
+    static async bulkCreate(agencies: AgencyModel[]): Promise<ResponseModel> {
+        try {
+            if (!agencies.length) {
+                return {
+                    status: false,
+                    message: "Aucune agence à créer",
+                    code: 400
+                };
+            }
+
+            // AMBIGUOUS CASE, flagged not guessed: `createMany()` doesn't
+            // return created rows, and `agency` has no unique column to
+            // re-query by afterwards (unlike bus's registration_number).
+            // Individual `create()` calls inside `$transaction([...])`
+            // preserve the original single-round-trip-worth of atomicity
+            // (all-or-nothing) while still getting each row (with its
+            // generated id) back, at the cost of N statements instead of 1.
+            const result = await prismaDb.$transaction(
+                agencies.map((agency) =>
+                    prismaDb.agency.create({
+                        data: {
+                            name: agency.name,
+                            address: agency.address,
+                            cities_served: agency.cities_served,
+                            phone: agency.phone,
+                            email: agency.email,
+                            logo: agency.logo,
+                            opening_hours: agency.opening_hours,
+                            custom_hours: agency.custom_hours ?? undefined,
+                            created_by: agency.created_by,
+                        },
+                    })
+                )
+            );
+
+            return {
+                status: true,
+                message: "Agences créées avec succès",
+                body: result,
+                code: 201
+            };
+
+        } catch (error) {
+            return {
+                status: false,
+                message: "Erreur lors de la création en masse",
+                exception: error instanceof Error ? error.message : error,
+                code: 500
+            };
+        }
     }
-
-    // Colonnes dans le même ordre que la requête
-    const columns = [
-      "name", "address", "cities_served", "phone", "email",
-      "logo", "opening_hours", "custom_hours", "created_by"
-    ];
-
-    // Générer dynamiquement la partie VALUES pour plusieurs lignes
-    const valuePlaceholders = agencies
-      .map((_, i) => {
-        const baseIndex = i * columns.length;
-        const placeholders = columns.map((_, j) => `$${baseIndex + j + 1}`).join(", ");
-        return `(${placeholders})`;
-      })
-      .join(", ");
-
-    // Extraire tous les paramètres dans un tableau plat
-    const params = agencies.flatMap(agency => [
-      agency.name,
-      agency.address,
-      agency.cities_served,
-      agency.phone,
-      agency.email,
-      agency.logo,
-      agency.opening_hours,
-      agency.custom_hours,
-      agency.created_by
-    ]);
-
-    const query = `
-      INSERT INTO ${kAgency} (${columns.join(", ")})
-      VALUES ${valuePlaceholders}
-      RETURNING *
-    `;
-
-    const result = await pgpDb.manyOrNone(query, params);
-
-    return {
-      status: true,
-      message: "Agences créées avec succès",
-      body: result,
-      code: 201
-    };
-
-  } catch (error) {
-    return {
-      status: false,
-      message: "Erreur lors de la création en masse",
-      exception: error instanceof Error ? error.message : error,
-      code: 500
-    };
-  }
-}
 
 
 }

@@ -1,0 +1,988 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model access_right {
+  id                                   Int                     @id @default(autoincrement())
+  key                                  String                  @unique @db.VarChar(50)
+  module                               String
+  module_name_en                       String                  @db.VarChar(100)
+  module_name_fr                       String                  @db.VarChar(100)
+  description_en                       String?                 @db.VarChar(255)
+  description_fr                       String?                 @db.VarChar(255)
+  is_deleted                           Boolean?                @default(false)
+  deleted_at                           DateTime?               @db.Timestamp(6)
+  deleted_by                           Int?
+  created_by                           Int?
+  users_access_right_created_byTousers users?                  @relation("access_right_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_access_right_deleted_byTousers users?                  @relation("access_right_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  profile_access_rights                profile_access_rights[]
+}
+
+model activity_log {
+  id          Int       @id @default(autoincrement())
+  user_id     Int?
+  action_type String    @db.VarChar(50)
+  entity_type String?   @db.VarChar(50)
+  entity_id   Int?
+  description String?
+  metadata    Json?
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+  customer    customer? @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([entity_type, entity_id], map: "idx_activity_log_entity")
+  @@index([user_id], map: "idx_activity_log_user")
+}
+
+model agency {
+  id                             Int       @id @default(autoincrement())
+  name                           String    @db.VarChar(255)
+  address                        String
+  cities_served                  String[]
+  phone                          String    @db.VarChar(20)
+  email                          String?   @db.VarChar(100)
+  logo                           String?   @db.VarChar(255)
+  opening_hours                  String?   @db.VarChar(50)
+  custom_hours                   Json?
+  is_deleted                     Boolean?  @default(false)
+  deleted_at                     DateTime? @db.Timestamp(6)
+  deleted_by                     Int?
+  created_by                     Int?
+  users_agency_created_byTousers users?    @relation("agency_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_agency_deleted_byTousers users?    @relation("agency_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bus                            bus[]
+  trip                           trip[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ai_responses {
+  id                        Int       @id @default(autoincrement())
+  intent                    String    @db.VarChar(50)
+  keywords                  String[]  @db.VarChar(100)
+  pattern                   String?
+  response_template         String
+  response_type             String?   @default("text") @db.VarChar(20)
+  language                  String    @default("en") @db.VarChar(2)
+  quick_reply_ids           Int[]
+  priority                  Int?      @default(0)
+  confidence_threshold      Decimal?  @default(0.70) @db.Decimal(3, 2)
+  is_active                 Boolean?  @default(true)
+  trigger_on_first_message  Boolean?  @default(false)
+  max_uses_per_conversation Int?
+  usage_count               Int?      @default(0)
+  success_rate              Decimal?  @db.Decimal(5, 2)
+  created_at                DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                DateTime? @default(now()) @db.Timestamp(6)
+  created_by                Int?
+  users                     users?    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([intent], map: "idx_ai_responses_intent", where: raw("(is_active = true)"))
+  @@index([priority(sort: Desc)], map: "idx_ai_responses_priority", where: raw("(is_active = true)"))
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model booking {
+  id                                     Int                 @id @default(autoincrement())
+  booking_reference                      String              @unique @db.VarChar(20)
+  payment_method                         String              @db.VarChar(20)
+  generated_trip_id                      Int
+  generated_trip_seat_id                 Int                 @unique(map: "idx_no_double_booking", where: raw("((status)::text = ANY ((ARRAY['confirmed'::character varying, 'pending'::character varying])::text[]))"))
+  customer_id                            Int
+  base_price                             Int?
+  seat_price_adjustment                  Decimal?            @default(0.00) @db.Decimal(10, 2)
+  taxes                                  Decimal?            @default(0.00) @db.Decimal(10, 2)
+  discount                               Decimal?            @default(0.00) @db.Decimal(10, 2)
+  total_price                            Int
+  status                                 String              @default("pending") @db.VarChar(20)
+  booking_date                           DateTime?           @default(now()) @db.Timestamp(6)
+  confirmation_date                      DateTime?           @db.Timestamp(6)
+  cancellation_date                      DateTime?           @db.Timestamp(6)
+  completion_date                        DateTime?           @db.Timestamp(6)
+  cancellation_reason                    String?
+  special_requests                       String?
+  payment_reference                      String?             @db.VarChar(100)
+  payment_status                         String?             @default("unpaid") @db.VarChar(20)
+  created_by                             Int
+  updated_at                             DateTime?           @default(now()) @db.Timestamp(6)
+  is_deleted                             Boolean?            @default(false)
+  deleted_at                             DateTime?           @db.Timestamp(6)
+  deleted_by                             Int?
+  group_id                               String?             @db.VarChar(50)
+  customer_booking_created_byTocustomer  customer            @relation("booking_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer_booking_customer_idTocustomer customer            @relation("booking_customer_idTocustomer", fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                                  users?              @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  generated_trip                         generated_trip      @relation(fields: [generated_trip_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  generated_trip_seat                    generated_trip_seat @relation(fields: [generated_trip_seat_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  booking_passenger                      booking_passenger[]
+
+  @@index([group_id], map: "idx_booking_group_id")
+}
+
+model booking_passenger {
+  id              Int      @id @default(autoincrement())
+  booking_id      Int?
+  name            String?  @db.VarChar(100)
+  phone           String?  @db.VarChar(30)
+  document_type   String?  @db.VarChar(20)
+  document_number String?  @db.VarChar(50)
+  booking         booking? @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model bus {
+  id                          Int              @id @default(autoincrement())
+  registration_number         String?          @unique @db.VarChar(50)
+  capacity                    Int
+  type                        String           @db.VarChar(20)
+  amenities                   String[]
+  seat_layout                 String           @db.VarChar(10)
+  has_toilet                  Boolean?         @default(false)
+  is_active                   Boolean?         @default(true)
+  agency_id                   Int?
+  is_deleted                  Boolean?         @default(false)
+  deleted_at                  DateTime?        @db.Timestamp(6)
+  deleted_by                  Int?
+  created_by                  Int?
+  agency                      agency?          @relation(fields: [agency_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_bus_created_byTousers users?           @relation("bus_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_bus_deleted_byTousers users?           @relation("bus_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  generated_trip              generated_trip[]
+  seat                        seat[]
+  trip                        trip[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model company_settings {
+  id            Int       @id @default(autoincrement())
+  company_name  String    @default("ADIGO") @db.VarChar(100)
+  address       String?
+  phone         String?   @db.VarChar(20)
+  whatsapp      String?   @db.VarChar(20)
+  email         String?   @db.VarChar(100)
+  website       String?   @db.VarChar(255)
+  facebook      String?   @db.VarChar(255)
+  twitter       String?   @db.VarChar(255)
+  instagram     String?   @db.VarChar(255)
+  logo_path     String?   @db.VarChar(255)
+  primary_color String?   @default("#D32F2F") @db.VarChar(7)
+  created_at    DateTime? @default(now()) @db.Timestamp(6)
+  updated_at    DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([id], map: "idx_company_settings_id")
+}
+
+model contract_type {
+  id                                       Int       @id @default(autoincrement())
+  name                                     String    @unique @db.VarChar(255)
+  code                                     String    @unique @db.VarChar(40)
+  terms_and_conditions                     String?
+  periodicity                              String    @db.VarChar(40)
+  is_deleted                               Boolean?  @default(false)
+  deleted_at                               DateTime? @db.Timestamp(6)
+  updated_at                               DateTime? @db.Timestamp(6)
+  deleted_by                               Int?
+  created_by                               Int?
+  staff_staff_contract_typeTocontract_type staff[]   @relation("staff_contract_typeTocontract_type")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model conversations {
+  id                                     Int        @id @default(autoincrement())
+  customer_id                            Int
+  assigned_to                            Int?
+  status                                 String     @default("open") @db.VarChar(20)
+  priority                               String?    @default("normal") @db.VarChar(20)
+  subject                                String?    @db.VarChar(255)
+  tags                                   String[]   @db.VarChar(100)
+  unread_count_customer                  Int?       @default(0)
+  unread_count_admin                     Int?       @default(0)
+  last_message_at                        DateTime?  @default(now()) @db.Timestamp(6)
+  last_message_preview                   String?
+  created_at                             DateTime?  @default(now()) @db.Timestamp(6)
+  updated_at                             DateTime?  @default(now()) @db.Timestamp(6)
+  closed_at                              DateTime?  @db.Timestamp(6)
+  is_deleted                             Boolean?   @default(false)
+  deleted_at                             DateTime?  @db.Timestamp(6)
+  deleted_by                             Int?
+  users_conversations_assigned_toTousers users?     @relation("conversations_assigned_toTousers", fields: [assigned_to], references: [id], onUpdate: NoAction)
+  customer                               customer   @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_conversations_deleted_byTousers  users?     @relation("conversations_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  messages                               messages[]
+
+  @@index([assigned_to], map: "idx_conversations_assigned", where: raw("(is_deleted = false)"))
+  @@index([customer_id], map: "idx_conversations_customer", where: raw("(is_deleted = false)"))
+  @@index([status], map: "idx_conversations_status", where: raw("(is_deleted = false)"))
+}
+
+model customer {
+  id                                                           Int                   @id @default(autoincrement())
+  first_name                                                   String                @db.VarChar(100)
+  last_name                                                    String                @db.VarChar(100)
+  email                                                        String?               @unique @db.VarChar(255)
+  phone                                                        String?               @unique @db.VarChar(20)
+  password                                                     String                @db.VarChar(255)
+  date_of_birth                                                DateTime?             @db.Date
+  gender                                                       String?               @db.VarChar(10)
+  address                                                      String?
+  city                                                         String?               @db.VarChar(100)
+  id_card_number                                               String?               @db.VarChar(50)
+  id_card_type                                                 String?               @db.VarChar(20)
+  preferred_language                                           String?               @default("fr") @db.VarChar(2)
+  notification_enabled                                         Boolean?              @default(true)
+  preferred_seat_type                                          String?               @db.VarChar(20)
+  loyalty_points                                               Int?                  @default(0)
+  customer_tier                                                String?               @default("regular") @db.VarChar(20)
+  account_status                                               String?               @default("active") @db.VarChar(20)
+  email_verified                                               Boolean?              @default(false)
+  phone_verified                                               Boolean?              @default(false)
+  profile_picture                                              String?
+  wallet_balance                                               Int?                  @default(0)
+  created_at                                                   DateTime?             @default(now()) @db.Timestamp(6)
+  updated_at                                                   DateTime?             @db.Timestamp(6)
+  last_login                                                   DateTime?             @db.Timestamp(6)
+  is_deleted                                                   Boolean?              @default(false)
+  deleted_at                                                   DateTime?             @db.Timestamp(6)
+  deleted_by                                                   Int?
+  fcm_token                                                    String?
+  default_orange_money_number                                  String?               @db.VarChar(20)
+  default_mtn_mobile_money_number                              String?               @db.VarChar(20)
+  role                                                         String?               @default("customer") @db.VarChar(20)
+  is_active                                                    Boolean?              @default(true)
+  activity_log                                                 activity_log[]
+  booking_booking_created_byTocustomer                         booking[]             @relation("booking_created_byTocustomer")
+  booking_booking_customer_idTocustomer                        booking[]             @relation("booking_customer_idTocustomer")
+  conversations                                                conversations[]
+  users                                                        users?                @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_favorite                                               event_favorite[]
+  event_organizer                                              event_organizer?
+  event_review                                                 event_review[]
+  event_review_event_review_flagged_byTocustomer               event_review[]        @relation("event_review_flagged_byTocustomer")
+  event_ticket                                                 event_ticket[]
+  event_ticket_resale_event_ticket_resale_buyer_idTocustomer   event_ticket_resale[] @relation("event_ticket_resale_buyer_idTocustomer")
+  event_ticket_resale_event_ticket_resale_created_byTocustomer event_ticket_resale[] @relation("event_ticket_resale_created_byTocustomer")
+  event_ticket_resale_event_ticket_resale_seller_idTocustomer  event_ticket_resale[] @relation("event_ticket_resale_seller_idTocustomer")
+  payment_transaction                                          payment_transaction[]
+  promo_code_promo_code_created_byTocustomer                   promo_code[]          @relation("promo_code_created_byTocustomer")
+  promo_code_promo_code_deleted_byTocustomer                   promo_code[]          @relation("promo_code_deleted_byTocustomer")
+  vtc_drivers                                                  vtc_drivers[]
+  vtc_rides                                                    vtc_rides[]
+  wallet                                                       wallet?
+  wallet_transaction                                           wallet_transaction[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model event {
+  id                              Int                   @id @default(autoincrement())
+  code                            String?               @unique @db.VarChar(20)
+  title                           String                @db.VarChar(255)
+  description                     String?
+  category_id                     Int
+  organizer_id                    Int
+  cover_image                     String?               @db.VarChar(255)
+  event_date                      DateTime              @db.Timestamp(6)
+  event_end_date                  DateTime?             @db.Timestamp(6)
+  venue_name                      String                @db.VarChar(255)
+  venue_address                   String?
+  city                            String                @db.VarChar(100)
+  maps_link                       String?
+  status                          String?               @default("draft") @db.VarChar(20)
+  is_featured                     Boolean?              @default(false)
+  views_count                     Int?                  @default(0)
+  created_at                      DateTime?             @default(now()) @db.Timestamp(6)
+  updated_at                      DateTime?             @db.Timestamp(6)
+  is_deleted                      Boolean               @default(false)
+  deleted_at                      DateTime?             @db.Timestamp(6)
+  deleted_by                      Int?
+  registration_deadline           DateTime?             @db.Timestamp(6)
+  gallery_images                  String[]
+  terms_and_conditions            String?
+  cancellation_policy             String?
+  refund_policy                   String?
+  has_premium_design              Boolean?              @default(false)
+  has_boost                       Boolean?              @default(false)
+  has_featured_placement          Boolean?              @default(false)
+  boost_start_date                DateTime?             @db.Timestamp(6)
+  boost_end_date                  DateTime?             @db.Timestamp(6)
+  featured_placement_duration     Int?
+  premium_design_amount           Int?                  @default(0)
+  boost_amount                    Int?                  @default(0)
+  featured_placement_amount       Int?                  @default(0)
+  contact_name                    String?               @db.VarChar(100)
+  contact_phone                   String?               @db.VarChar(20)
+  contact_email                   String?               @db.VarChar(100)
+  validation_status               String?               @default("pending") @db.VarChar(20)
+  validated_by                    Int?
+  validated_at                    DateTime?             @db.Timestamp(6)
+  validation_notes                String?
+  published_at                    DateTime?             @db.Timestamp(6)
+  cancellation_reason             String?
+  cancelled_at                    DateTime?             @db.Timestamp(6)
+  created_by                      Int?
+  event_category                  event_category        @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_event_created_byTousers   users?                @relation("event_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                           users?                @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_organizer                 event_organizer       @relation(fields: [organizer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_event_validated_byTousers users?                @relation("event_validated_byTousers", fields: [validated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_favorite                  event_favorite[]
+  event_review                    event_review[]
+  event_ticket                    event_ticket[]
+  event_ticket_resale             event_ticket_resale[]
+  event_ticket_type               event_ticket_type[]
+
+  @@index([category_id], map: "idx_event_category")
+  @@index([city], map: "idx_event_city")
+  @@index([event_date], map: "idx_event_date")
+  @@index([is_featured], map: "idx_event_featured", where: raw("(is_featured = true)"))
+  @@index([organizer_id], map: "idx_event_organizer")
+  @@index([status], map: "idx_event_status")
+}
+
+model event_category {
+  id            Int       @id @default(autoincrement())
+  name          String    @unique @db.VarChar(100)
+  name_fr       String    @db.VarChar(100)
+  name_en       String    @db.VarChar(100)
+  icon          String?   @db.VarChar(50)
+  color         String?   @db.VarChar(20)
+  is_active     Boolean?  @default(true)
+  display_order Int?      @default(0)
+  created_at    DateTime? @default(now()) @db.Timestamp(6)
+  event         event[]
+}
+
+model event_favorite {
+  id          Int       @id @default(autoincrement())
+  customer_id Int
+  event_id    Int
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+  customer    customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  event       event     @relation(fields: [event_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([customer_id, event_id])
+  @@index([customer_id], map: "idx_favorite_customer")
+  @@index([event_id], map: "idx_favorite_event")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model event_organizer {
+  id                                       Int       @id @default(autoincrement())
+  customer_id                              Int?      @unique
+  name                                     String    @db.VarChar(255)
+  type                                     String?   @default("individual") @db.VarChar(50)
+  phone                                    String    @db.VarChar(20)
+  email                                    String    @db.VarChar(100)
+  logo                                     String?   @db.VarChar(255)
+  description                              String?
+  is_verified                              Boolean?  @default(false)
+  verified_at                              DateTime? @db.Timestamp(6)
+  verified_by                              Int?
+  verification_status                      String?   @default("pending") @db.VarChar(20)
+  id_card_front                            String?   @db.VarChar(255)
+  id_card_back                             String?   @db.VarChar(255)
+  rccm_document                            String?   @db.VarChar(255)
+  rejection_reason                         String?
+  total_events                             Int?      @default(0)
+  total_sales                              Int?      @default(0)
+  created_at                               DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                               DateTime? @db.Timestamp(6)
+  is_deleted                               Boolean   @default(false)
+  deleted_at                               DateTime? @db.Timestamp(6)
+  deleted_by                               Int?
+  verification_notes                       String?
+  payment_info                             String?
+  venue_authorization                      String?
+  event                                    event[]
+  customer                                 customer? @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_event_organizer_deleted_byTousers  users?    @relation("event_organizer_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_event_organizer_verified_byTousers users?    @relation("event_organizer_verified_byTousers", fields: [verified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model event_review {
+  id                                         Int       @id @default(autoincrement())
+  event_id                                   Int
+  customer_id                                Int
+  rating                                     Int
+  comment                                    String?
+  is_approved                                Boolean?  @default(true)
+  flagged                                    Boolean?  @default(false)
+  flagged_reason                             String?
+  created_at                                 DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                                 DateTime? @db.Timestamp(6)
+  is_flagged                                 Boolean?  @default(false)
+  flag_reason                                String?
+  flagged_by                                 Int?
+  flagged_at                                 DateTime? @db.Timestamp(6)
+  is_deleted                                 Boolean   @default(false)
+  deleted_at                                 DateTime? @db.Timestamp(6)
+  deleted_by                                 Int?
+  customer                                   customer  @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                                      users?    @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event                                      event     @relation(fields: [event_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer_event_review_flagged_byTocustomer customer? @relation("event_review_flagged_byTocustomer", fields: [flagged_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([event_id, customer_id])
+  @@index([event_id], map: "idx_review_event")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model event_ticket {
+  id                  Int                   @id @default(autoincrement())
+  reference           String?               @unique @db.VarChar(20)
+  event_id            Int
+  ticket_type_id      Int
+  customer_id         Int
+  quantity            Int                   @default(1)
+  unit_price          Int
+  total_price         Int
+  payment_method      String?               @db.VarChar(20)
+  payment_status      String?               @default("pending") @db.VarChar(20)
+  payment_ref         String?               @db.VarChar(100)
+  qr_code             String?               @db.VarChar(255)
+  status              String?               @default("pending") @db.VarChar(20)
+  used_at             DateTime?             @db.Timestamp(6)
+  created_at          DateTime?             @default(now()) @db.Timestamp(6)
+  is_deleted          Boolean               @default(false)
+  deleted_at          DateTime?             @db.Timestamp(6)
+  deleted_by          Int?
+  customer            customer              @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users?                @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event               event                 @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_ticket_type   event_ticket_type     @relation(fields: [ticket_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_ticket_resale event_ticket_resale[]
+
+  @@index([customer_id], map: "idx_ticket_customer")
+  @@index([event_id], map: "idx_ticket_event")
+  @@index([reference], map: "idx_ticket_reference")
+  @@index([status], map: "idx_ticket_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model event_ticket_resale {
+  id                                                Int                 @id @default(autoincrement())
+  resale_code                                       String?             @unique @db.VarChar(20)
+  ticket_purchase_id                                Int
+  event_id                                          Int
+  ticket_type_id                                    Int
+  seller_id                                         Int
+  original_price                                    Int
+  resale_price                                      Int
+  commission_rate                                   Decimal?            @default(10.00) @db.Decimal(5, 2)
+  commission_amount                                 Int?
+  seller_receives                                   Int?
+  buyer_id                                          Int?
+  status                                            String?             @default("listed") @db.VarChar(20)
+  payment_method                                    String?             @db.VarChar(20)
+  payment_status                                    String?             @default("pending") @db.VarChar(20)
+  payment_reference                                 String?             @db.VarChar(100)
+  wallet_transaction_id                             Int?
+  listing_description                               String?
+  reason_for_sale                                   String?             @db.VarChar(255)
+  listed_at                                         DateTime?           @default(now()) @db.Timestamp(6)
+  sold_at                                           DateTime?           @db.Timestamp(6)
+  cancelled_at                                      DateTime?           @db.Timestamp(6)
+  cancellation_reason                               String?
+  expires_at                                        DateTime?           @db.Timestamp(6)
+  created_at                                        DateTime?           @default(now()) @db.Timestamp(6)
+  updated_at                                        DateTime?           @db.Timestamp(6)
+  is_deleted                                        Boolean?            @default(false)
+  deleted_at                                        DateTime?           @db.Timestamp(6)
+  deleted_by                                        Int?
+  created_by                                        Int?
+  approved_by                                       Int?
+  approved_at                                       DateTime?           @db.Timestamp(6)
+  users_event_ticket_resale_approved_byTousers      users?              @relation("event_ticket_resale_approved_byTousers", fields: [approved_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer_event_ticket_resale_buyer_idTocustomer   customer?           @relation("event_ticket_resale_buyer_idTocustomer", fields: [buyer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer_event_ticket_resale_created_byTocustomer customer?           @relation("event_ticket_resale_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                                             users?              @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event                                             event               @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer_event_ticket_resale_seller_idTocustomer  customer            @relation("event_ticket_resale_seller_idTocustomer", fields: [seller_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_ticket                                      event_ticket        @relation(fields: [ticket_purchase_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_ticket_type                                 event_ticket_type   @relation(fields: [ticket_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallet_transaction                                wallet_transaction? @relation(fields: [wallet_transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([buyer_id], map: "idx_resale_buyer", where: raw("(is_deleted = false)"))
+  @@index([event_id], map: "idx_resale_event", where: raw("(is_deleted = false)"))
+  @@index([seller_id], map: "idx_resale_seller", where: raw("(is_deleted = false)"))
+  @@index([status], map: "idx_resale_status", where: raw("(is_deleted = false)"))
+  @@index([ticket_purchase_id], map: "idx_resale_ticket_purchase")
+}
+
+model event_ticket_type {
+  id                  Int                   @id @default(autoincrement())
+  event_id            Int
+  name                String                @db.VarChar(100)
+  description         String?
+  price               Int
+  quantity            Int
+  sold                Int?                  @default(0)
+  sale_start          DateTime?             @db.Timestamp(6)
+  sale_end            DateTime?             @db.Timestamp(6)
+  max_per_order       Int?                  @default(10)
+  is_active           Boolean?              @default(true)
+  created_at          DateTime?             @default(now()) @db.Timestamp(6)
+  event_ticket        event_ticket[]
+  event_ticket_resale event_ticket_resale[]
+  event               event                 @relation(fields: [event_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([event_id, name])
+  @@index([event_id], map: "idx_ticket_type_event")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model generated_trip {
+  id                                       Int                   @id @default(autoincrement())
+  trip_id                                  Int
+  original_departure_time                  DateTime              @db.Timestamp(6)
+  actual_departure_time                    DateTime              @db.Timestamp(6)
+  actual_arrival_time                      DateTime?             @db.Timestamp(6)
+  available_seats                          Int
+  status                                   String?               @default("scheduled") @db.VarChar(20)
+  driver_id                                Int?
+  conductor_id                             Int?
+  bus_id                                   Int
+  notes                                    String?
+  created_at                               DateTime?             @default(now()) @db.Timestamp(6)
+  updated_at                               DateTime?             @default(now()) @db.Timestamp(6)
+  booking                                  booking[]
+  bus                                      bus                   @relation(fields: [bus_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff_generated_trip_conductor_idTostaff staff?                @relation("generated_trip_conductor_idTostaff", fields: [conductor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff_generated_trip_driver_idTostaff    staff?                @relation("generated_trip_driver_idTostaff", fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  trip                                     trip                  @relation(fields: [trip_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  generated_trip_seat                      generated_trip_seat[]
+
+  @@unique([trip_id, actual_departure_time])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model generated_trip_seat {
+  id                Int            @id @default(autoincrement())
+  generated_trip_id Int
+  seat_id           Int
+  status            String?        @default("available") @db.VarChar(20)
+  price_adjustment  Decimal?       @default(0.00) @db.Decimal(10, 2)
+  blocked_reason    String?
+  blocked_until     DateTime?      @db.Timestamp(6)
+  created_at        DateTime?      @default(now()) @db.Timestamp(6)
+  updated_at        DateTime?      @default(now()) @db.Timestamp(6)
+  booking           booking?
+  generated_trip    generated_trip @relation(fields: [generated_trip_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  seat              seat           @relation(fields: [seat_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([generated_trip_id, seat_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model messages {
+  id                    Int           @id @default(autoincrement())
+  conversation_id       Int
+  sender_type           String        @db.VarChar(20)
+  sender_id             Int?
+  sender_name           String?       @db.VarChar(100)
+  message_type          String        @default("text") @db.VarChar(20)
+  content               String
+  metadata              Json?
+  is_read               Boolean?      @default(false)
+  read_at               DateTime?     @db.Timestamp(6)
+  ai_processed          Boolean?      @default(false)
+  ai_suggested_response String?
+  ai_confidence         Decimal?      @db.Decimal(3, 2)
+  ai_intent             String?       @db.VarChar(50)
+  created_at            DateTime?     @default(now()) @db.Timestamp(6)
+  updated_at            DateTime?     @default(now()) @db.Timestamp(6)
+  is_deleted            Boolean?      @default(false)
+  deleted_at            DateTime?     @db.Timestamp(6)
+  conversations         conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([ai_intent], map: "idx_messages_ai_intent", where: raw("(ai_processed = true)"))
+  @@index([conversation_id], map: "idx_messages_conversation", where: raw("(is_deleted = false)"))
+  @@index([created_at(sort: Desc)], map: "idx_messages_created")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model payment_transaction {
+  id                Int       @id @default(autoincrement())
+  customer_id       Int
+  provider          String    @default("orange_money") @db.VarChar(20)
+  purpose           String    @db.VarChar(30)
+  purpose_ref_id    Int?
+  order_id          String    @unique @db.VarChar(50)
+  pay_token         String?   @db.VarChar(100)
+  subscriber_msisdn String    @db.VarChar(20)
+  amount            Int
+  currency          String?   @default("XAF") @db.VarChar(10)
+  description       String?
+  status            String    @default("initiated") @db.VarChar(20)
+  provider_txn_id   String?   @db.VarChar(100)
+  settled           Boolean   @default(false)
+  settled_at        DateTime? @db.Timestamp(6)
+  error_message     String?
+  metadata          Json?
+  created_at        DateTime? @default(now()) @db.Timestamp(6)
+  updated_at        DateTime? @db.Timestamp(6)
+  customer          customer  @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([customer_id], map: "idx_payment_transaction_customer")
+  @@index([pay_token], map: "idx_payment_transaction_pay_token")
+}
+
+model profile {
+  id                              Int                     @id @default(autoincrement())
+  name                            String                  @unique @db.VarChar(50)
+  description                     String?                 @db.VarChar(50)
+  is_deleted                      Boolean?                @default(false)
+  deleted_at                      DateTime?               @db.Timestamp(6)
+  deleted_by                      Int?
+  created_by                      Int?
+  users_profile_created_byTousers users?                  @relation("profile_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_profile_deleted_byTousers users?                  @relation("profile_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  profile_access_rights           profile_access_rights[]
+}
+
+model profile_access_rights {
+  profile_id      Int
+  access_right_id Int
+  is_deleted      Boolean?     @default(false)
+  deleted_at      DateTime?    @db.Timestamp(6)
+  deleted_by      Int?
+  access_right    access_right @relation(fields: [access_right_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users           users?       @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  profile         profile      @relation(fields: [profile_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([profile_id, access_right_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model promo_code {
+  id                                       Int       @id @default(autoincrement())
+  code                                     String    @unique @db.VarChar(50)
+  discount_type                            String    @db.VarChar(20)
+  discount_value                           Int
+  max_uses                                 Int?
+  uses_count                               Int       @default(0)
+  min_purchase_amount                      Int?      @default(0)
+  valid_from                               DateTime? @db.Timestamp(6)
+  valid_until                              DateTime? @db.Timestamp(6)
+  is_active                                Boolean   @default(true)
+  created_by                               Int?
+  created_at                               DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                               DateTime? @db.Timestamp(6)
+  is_deleted                               Boolean   @default(false)
+  deleted_at                               DateTime? @db.Timestamp(6)
+  deleted_by                               Int?
+  customer_promo_code_created_byTocustomer customer? @relation("promo_code_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer_promo_code_deleted_byTocustomer customer? @relation("promo_code_deleted_byTocustomer", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model quick_replies {
+  id            Int       @id @default(autoincrement())
+  title         String    @db.VarChar(100)
+  action_type   String    @db.VarChar(50)
+  payload       Json
+  icon          String?   @db.VarChar(50)
+  color         String?   @db.VarChar(20)
+  display_order Int?      @default(0)
+  requires_auth Boolean?  @default(false)
+  user_role     String?   @db.VarChar(20)
+  is_active     Boolean?  @default(true)
+  created_at    DateTime? @default(now()) @db.Timestamp(6)
+  updated_at    DateTime? @default(now()) @db.Timestamp(6)
+  created_by    Int?
+  users         users?    @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model recurrence_pattern {
+  id                                         Int       @id @default(autoincrement())
+  type                                       String    @db.VarChar(20)
+  interval                                   Int?      @default(1)
+  days_of_week                               String?
+  end_date                                   DateTime? @db.Date
+  exceptions                                 String?
+  is_deleted                                 Boolean?  @default(false)
+  deleted_at                                 DateTime? @db.Timestamp(6)
+  deleted_by                                 Int?
+  created_by                                 Int?
+  users_recurrence_pattern_created_byTousers users?    @relation("recurrence_pattern_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_recurrence_pattern_deleted_byTousers users?    @relation("recurrence_pattern_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  trip                                       trip[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model seat {
+  id                  Int                   @id @default(autoincrement())
+  bus_id              Int
+  seat_number         Int
+  row_number          Int?
+  column_position     Int?
+  seat_type           String?               @db.VarChar(20)
+  is_active           Boolean?              @default(true)
+  created_at          DateTime?             @default(now()) @db.Timestamp(6)
+  generated_trip_seat generated_trip_seat[]
+  bus                 bus                   @relation(fields: [bus_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([bus_id, seat_number])
+  @@index([bus_id], map: "idx_seat_bus")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model staff {
+  id                                                Int              @id @default(autoincrement())
+  first_name                                        String           @db.VarChar(50)
+  birth_name                                        String?          @db.VarChar(50)
+  last_name                                         String?          @db.VarChar(50)
+  employee_id                                       String           @unique @db.VarChar(20)
+  birth_date                                        DateTime?        @db.Timestamp(6)
+  email                                             String?          @db.VarChar(100)
+  mobile_phone                                      String?          @db.VarChar(20)
+  landline_phone                                    String?          @db.VarChar(20)
+  contract_start_date                               DateTime         @db.Timestamp(6)
+  contract_start_time                               DateTime?        @db.Time(6)
+  weekly_working_hours                              Int
+  contract_end_date                                 DateTime?        @db.Timestamp(6)
+  contract_type                                     Int
+  salary                                            Int
+  payment_mode                                      String           @default("monthly") @db.VarChar(50)
+  last_salary_payment                               DateTime?        @db.Date
+  is_deleted                                        Boolean?         @default(false)
+  deleted_at                                        DateTime?        @db.Timestamp(6)
+  deleted_by                                        Int?
+  generated_trip_generated_trip_conductor_idTostaff generated_trip[] @relation("generated_trip_conductor_idTostaff")
+  generated_trip_generated_trip_driver_idTostaff    generated_trip[] @relation("generated_trip_driver_idTostaff")
+  contract_type_staff_contract_typeTocontract_type  contract_type    @relation("staff_contract_typeTocontract_type", fields: [contract_type], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                                             users?           @relation("staff_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model trip {
+  id                           Int                 @id @default(autoincrement())
+  departure_city               String              @db.VarChar(100)
+  arrival_city                 String              @db.VarChar(100)
+  departure_time               DateTime            @db.Timestamp(6)
+  arrival_time                 DateTime            @db.Timestamp(6)
+  price                        Decimal             @db.Decimal(10, 2)
+  bus_id                       Int?
+  agency_id                    Int?
+  is_active                    Boolean?            @default(true)
+  cancellation_policy          String?
+  recurrence_pattern_id        Int?
+  valid_from                   DateTime            @db.Date
+  valid_until                  DateTime?           @db.Date
+  is_deleted                   Boolean?            @default(false)
+  deleted_at                   DateTime?           @db.Timestamp(6)
+  updated_at                   DateTime?           @default(now()) @db.Timestamp(6)
+  deleted_by                   Int?
+  created_by                   Int?
+  generated_trip               generated_trip[]
+  agency                       agency?             @relation(fields: [agency_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bus                          bus?                @relation(fields: [bus_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_trip_created_byTousers users?              @relation("trip_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_trip_deleted_byTousers users?              @relation("trip_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recurrence_pattern           recurrence_pattern? @relation(fields: [recurrence_pattern_id], references: [id], onUpdate: NoAction)
+}
+
+model trip_generation_log {
+  id              Int       @id @default(autoincrement())
+  generation_date DateTime  @db.Date
+  trips_generated Int
+  period_start    DateTime  @db.Date
+  period_end      DateTime  @db.Date
+  generated_by    Int?
+  created_at      DateTime? @default(now()) @db.Timestamp(6)
+  users           users?    @relation(fields: [generated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model users {
+  id                                                         Int                     @id @default(autoincrement())
+  login                                                      String                  @unique @db.VarChar(255)
+  password                                                   String                  @db.VarChar(255)
+  creation_date                                              DateTime?               @default(now()) @db.Timestamp(6)
+  staff                                                      Int?
+  profile                                                    Int?
+  dark_mode                                                  Boolean?                @default(false)
+  language                                                   String?                 @db.VarChar(2)
+  super_u                                                    String?                 @db.VarChar
+  role                                                       String?                 @default("guest") @db.VarChar(50)
+  account_status                                             String?                 @db.VarChar
+  is_deleted                                                 Boolean?                @default(false)
+  is_online                                                  Boolean?                @default(false)
+  deleted_at                                                 DateTime?               @db.Timestamp(6)
+  deleted_by                                                 Int?
+  updated_at                                                 DateTime?               @db.Timestamp(6)
+  created_by                                                 Int?
+  access_right_access_right_created_byTousers                access_right[]          @relation("access_right_created_byTousers")
+  access_right_access_right_deleted_byTousers                access_right[]          @relation("access_right_deleted_byTousers")
+  agency_agency_created_byTousers                            agency[]                @relation("agency_created_byTousers")
+  agency_agency_deleted_byTousers                            agency[]                @relation("agency_deleted_byTousers")
+  ai_responses                                               ai_responses[]
+  booking                                                    booking[]
+  bus_bus_created_byTousers                                  bus[]                   @relation("bus_created_byTousers")
+  bus_bus_deleted_byTousers                                  bus[]                   @relation("bus_deleted_byTousers")
+  conversations_conversations_assigned_toTousers             conversations[]         @relation("conversations_assigned_toTousers")
+  conversations_conversations_deleted_byTousers              conversations[]         @relation("conversations_deleted_byTousers")
+  customer                                                   customer[]
+  event_event_created_byTousers                              event[]                 @relation("event_created_byTousers")
+  event                                                      event[]
+  event_event_validated_byTousers                            event[]                 @relation("event_validated_byTousers")
+  event_organizer_event_organizer_deleted_byTousers          event_organizer[]       @relation("event_organizer_deleted_byTousers")
+  event_organizer_event_organizer_verified_byTousers         event_organizer[]       @relation("event_organizer_verified_byTousers")
+  event_review                                               event_review[]
+  event_ticket                                               event_ticket[]
+  event_ticket_resale_event_ticket_resale_approved_byTousers event_ticket_resale[]   @relation("event_ticket_resale_approved_byTousers")
+  event_ticket_resale                                        event_ticket_resale[]
+  profile_profile_created_byTousers                          profile[]               @relation("profile_created_byTousers")
+  profile_profile_deleted_byTousers                          profile[]               @relation("profile_deleted_byTousers")
+  profile_access_rights                                      profile_access_rights[]
+  quick_replies                                              quick_replies[]
+  recurrence_pattern_recurrence_pattern_created_byTousers    recurrence_pattern[]    @relation("recurrence_pattern_created_byTousers")
+  recurrence_pattern_recurrence_pattern_deleted_byTousers    recurrence_pattern[]    @relation("recurrence_pattern_deleted_byTousers")
+  staff_staff_deleted_byTousers                              staff[]                 @relation("staff_deleted_byTousers")
+  system_settings                                            system_settings[]
+  trip_trip_created_byTousers                                trip[]                  @relation("trip_created_byTousers")
+  trip_trip_deleted_byTousers                                trip[]                  @relation("trip_deleted_byTousers")
+  trip_generation_log                                        trip_generation_log[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model vtc_drivers {
+  id                    Int         @id @default(autoincrement())
+  user_id               Int?
+  first_name            String      @db.VarChar(100)
+  last_name             String      @db.VarChar(100)
+  phone                 String      @db.VarChar(20)
+  email                 String?     @db.VarChar(255)
+  photo                 String?
+  license_number        String      @unique @db.VarChar(50)
+  license_expiry        DateTime    @db.Date
+  vehicle_type          String      @db.VarChar(50)
+  vehicle_brand         String?     @db.VarChar(50)
+  vehicle_model         String?     @db.VarChar(50)
+  vehicle_year          Int?
+  vehicle_color         String?     @db.VarChar(30)
+  license_plate         String      @unique @db.VarChar(20)
+  rating                Decimal?    @default(5.0) @db.Decimal(3, 2)
+  total_rides           Int?        @default(0)
+  status                String?     @default("offline") @db.VarChar(20)
+  current_latitude      Decimal?    @db.Decimal(10, 8)
+  current_longitude     Decimal?    @db.Decimal(11, 8)
+  last_location_update  DateTime?   @db.Timestamp(6)
+  created_at            DateTime?   @default(now()) @db.Timestamp(6)
+  updated_at            DateTime?   @default(now()) @db.Timestamp(6)
+  insurance_number      String?     @db.VarChar(50)
+  insurance_expiry      DateTime?   @db.Date
+  registration_document String?
+  vehicle_photos        String[]
+  seats                 Int?        @default(4)
+  customer              customer?   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_rides             vtc_rides[]
+
+  @@index([current_latitude, current_longitude], map: "idx_vtc_drivers_location")
+  @@index([status], map: "idx_vtc_drivers_status")
+}
+
+model vtc_ride_tracking {
+  id          Int       @id @default(autoincrement())
+  ride_id     Int
+  latitude    Decimal   @db.Decimal(10, 8)
+  longitude   Decimal   @db.Decimal(11, 8)
+  heading     Decimal?  @db.Decimal(5, 2)
+  speed       Decimal?  @db.Decimal(5, 2)
+  recorded_at DateTime? @default(now()) @db.Timestamp(6)
+  vtc_rides   vtc_rides @relation(fields: [ride_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ride_id], map: "idx_vtc_tracking_ride")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model vtc_rides {
+  id                  Int                 @id @default(autoincrement())
+  customer_id         Int
+  driver_id           Int?
+  vehicle_type        String              @db.VarChar(50)
+  pickup_address      String
+  pickup_latitude     Decimal             @db.Decimal(10, 8)
+  pickup_longitude    Decimal             @db.Decimal(11, 8)
+  pickup_time         DateTime?           @db.Timestamp(6)
+  dropoff_address     String
+  dropoff_latitude    Decimal             @db.Decimal(10, 8)
+  dropoff_longitude   Decimal             @db.Decimal(11, 8)
+  dropoff_time        DateTime?           @db.Timestamp(6)
+  base_fare           Decimal             @db.Decimal(10, 2)
+  distance_fare       Decimal?            @default(0) @db.Decimal(10, 2)
+  time_fare           Decimal?            @default(0) @db.Decimal(10, 2)
+  surge_multiplier    Decimal?            @default(1.0) @db.Decimal(3, 2)
+  total_fare          Decimal             @db.Decimal(10, 2)
+  status              String?             @default("requested") @db.VarChar(20)
+  cancellation_reason String?
+  cancelled_by        String?             @db.VarChar(20)
+  customer_rating     Int?
+  driver_rating       Int?
+  customer_feedback   String?
+  driver_feedback     String?
+  payment_method      String              @db.VarChar(50)
+  payment_status      String?             @default("pending") @db.VarChar(20)
+  estimated_distance  Decimal?            @db.Decimal(10, 2)
+  actual_distance     Decimal?            @db.Decimal(10, 2)
+  estimated_duration  Int?
+  actual_duration     Int?
+  created_at          DateTime?           @default(now()) @db.Timestamp(6)
+  updated_at          DateTime?           @default(now()) @db.Timestamp(6)
+  vtc_ride_tracking   vtc_ride_tracking[]
+  customer            customer            @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_drivers         vtc_drivers?        @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([customer_id], map: "idx_vtc_rides_customer")
+  @@index([driver_id], map: "idx_vtc_rides_driver")
+  @@index([status], map: "idx_vtc_rides_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model wallet {
+  id                Int       @id @default(autoincrement())
+  customer_id       Int       @unique
+  balance           Int       @default(0)
+  transaction_count Int?      @default(0)
+  total_credits     Int?      @default(0)
+  total_debits      Int?      @default(0)
+  created_at        DateTime? @default(now()) @db.Timestamp(6)
+  updated_at        DateTime? @db.Timestamp(6)
+  customer          customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([customer_id], map: "idx_wallet_customer")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model wallet_transaction {
+  id                  Int                   @id @default(autoincrement())
+  customer_id         Int
+  amount              Int
+  transaction_type    String                @db.VarChar(20)
+  payment_method      String?               @db.VarChar(20)
+  payment_reference   String?               @db.VarChar(100)
+  description         String?
+  balance_before      Int
+  balance_after       Int
+  created_at          DateTime?             @default(now()) @db.Timestamp(6)
+  event_ticket_resale event_ticket_resale[]
+  customer            customer              @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model system_settings {
+  id            Int       @id @default(autoincrement())
+  category      String    @db.VarChar(50)
+  setting_key   String    @db.VarChar(100)
+  setting_value String?
+  description   String?
+  updated_at    DateTime? @db.Timestamp(6)
+  updated_by    Int?
+  is_deleted    Boolean   @default(false)
+  users         users?    @relation(fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([category, setting_key], map: "uq_system_settings_category_key")
+}

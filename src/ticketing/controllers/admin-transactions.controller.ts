@@ -6,7 +6,11 @@
 
 import { Request, Response } from 'express';
 import { I18n } from '../../utils/i18n';
-import pgpDb from '../../config/pgdb';
+// Migrated to Prisma's native model API — logic lives in
+// AdminTransactionsRepository, see BOOKING_MODULE_NOTES.md ("Full Prisma
+// relational-API migration", tier 3).
+import { AdminTransactionsRepository } from '../repositories/admin-transactions.repository';
+import { WalletRepository } from "../../repository/wallet.repository";
 
 export class AdminTransactionsController {
 
@@ -17,53 +21,13 @@ export class AdminTransactionsController {
     static async getWalletTransactions(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const { limit = 50, offset = 0, type, status } = req.query;
+            const { limit = 50, offset = 0, type } = req.query;
 
-            let query = `
-                SELECT
-                    wt.*,
-                    json_build_object(
-                        'id', c.id,
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email
-                    ) AS customer
-                FROM wallet_transaction wt
-                JOIN customer c ON wt.customer_id = c.id
-                WHERE 1=1
-            `;
-
-            const params: any[] = [];
-
-            if (type) {
-                params.push(type);
-                query += ` AND wt.type = $${params.length}`;
-            }
-
-            if (status) {
-                params.push(status);
-                query += ` AND wt.status = $${params.length}`;
-            }
-
-            query += ` ORDER BY wt.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-            params.push(parseInt(limit as string), parseInt(offset as string));
-
-            const transactions = await pgpDb.any(query, params);
-
-            // Get total count
-            let countQuery = `SELECT COUNT(*)::int AS total FROM wallet_transaction WHERE 1=1`;
-            const countParams: any[] = [];
-
-            if (type) {
-                countParams.push(type);
-                countQuery += ` AND type = $${countParams.length}`;
-            }
-            if (status) {
-                countParams.push(status);
-                countQuery += ` AND status = $${countParams.length}`;
-            }
-
-            const { total } = await pgpDb.one(countQuery, countParams);
+            const { transactions, total } = await AdminTransactionsRepository.getWalletTransactions(
+                parseInt(limit as string),
+                parseInt(offset as string),
+                type as string | undefined
+            );
 
             res.status(200).json({
                 status: true,
@@ -99,48 +63,11 @@ export class AdminTransactionsController {
             const lang = req.lang || 'en';
             const { limit = 50, offset = 0, status } = req.query;
 
-            let query = `
-                SELECT
-                    et.*,
-                    json_build_object(
-                        'id', e.id,
-                        'title', e.title,
-                        'code', e.code
-                    ) AS event,
-                    json_build_object(
-                        'id', c.id,
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email
-                    ) AS customer
-                FROM event_ticket et
-                JOIN event e ON et.event_id = e.id
-                JOIN customer c ON et.customer_id = c.id
-                WHERE 1=1
-            `;
-
-            const params: any[] = [];
-
-            if (status) {
-                params.push(status);
-                query += ` AND et.status = $${params.length}`;
-            }
-
-            query += ` ORDER BY et.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-            params.push(parseInt(limit as string), parseInt(offset as string));
-
-            const transactions = await pgpDb.any(query, params);
-
-            // Get total count
-            let countQuery = `SELECT COUNT(*)::int AS total FROM event_ticket WHERE 1=1`;
-            const countParams: any[] = [];
-
-            if (status) {
-                countParams.push(status);
-                countQuery += ` AND status = $${countParams.length}`;
-            }
-
-            const { total } = await pgpDb.one(countQuery, countParams);
+            const { transactions, total } = await AdminTransactionsRepository.getTicketTransactions(
+                parseInt(limit as string),
+                parseInt(offset as string),
+                status as string | undefined
+            );
 
             res.status(200).json({
                 status: true,
@@ -175,32 +102,7 @@ export class AdminTransactionsController {
         try {
             const lang = req.lang || 'en';
 
-            const premiumTransactions = await pgpDb.any(`
-                SELECT
-                    e.id,
-                    e.code,
-                    e.title,
-                    e.has_premium_design,
-                    e.premium_design_amount,
-                    e.boost_visibility,
-                    e.boost_amount,
-                    e.field_service,
-                    e.field_service_amount,
-                    e.created_at,
-                    json_build_object(
-                        'id', eo.id,
-                        'name', eo.name,
-                        'email', eo.email
-                    ) AS organizer
-                FROM event e
-                JOIN event_organizer eo ON e.organizer_id = eo.id
-                WHERE (
-                    e.has_premium_design = TRUE
-                    OR e.boost_visibility = TRUE
-                    OR e.field_service = TRUE
-                )
-                ORDER BY e.created_at DESC
-            `);
+            const premiumTransactions = await AdminTransactionsRepository.getPremiumTransactions();
 
             res.status(200).json({
                 status: true,
@@ -228,20 +130,7 @@ export class AdminTransactionsController {
             const lang = req.lang || 'en';
             const transactionId = parseInt((req.params as { id: string }).id);
 
-            const transaction = await pgpDb.oneOrNone(`
-                SELECT
-                    wt.*,
-                    json_build_object(
-                        'id', c.id,
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email,
-                        'phone', c.phone
-                    ) AS customer
-                FROM wallet_transaction wt
-                JOIN customer c ON wt.customer_id = c.id
-                WHERE wt.id = $1
-            `, [transactionId]);
+            const transaction = await AdminTransactionsRepository.findTransactionById(transactionId);
 
             if (!transaction) {
                 res.status(404).json({
@@ -278,7 +167,6 @@ export class AdminTransactionsController {
             const lang = req.lang || 'en';
             const transactionId = parseInt((req.params as { id: string }).id);
             const { reason } = req.body;
-            const adminId = req.userId;
 
             if (!reason) {
                 res.status(400).json({
@@ -289,12 +177,11 @@ export class AdminTransactionsController {
                 return;
             }
 
-            // Get original transaction
-            const transaction = await pgpDb.oneOrNone(`
-                SELECT * FROM wallet_transaction WHERE id = $1
-            `, [transactionId]);
+            // Get the original ticket purchase (see getTransactionById —
+            // this screen works off event_ticket, not wallet_transaction).
+            const ticket = await AdminTransactionsRepository.findTicketForRefund(transactionId);
 
-            if (!transaction) {
+            if (!ticket) {
                 res.status(404).json({
                     status: false,
                     message: I18n.t('transaction_not_found', lang),
@@ -303,37 +190,31 @@ export class AdminTransactionsController {
                 return;
             }
 
-            if (transaction.type !== 'debit') {
+            if (ticket.payment_status !== 'paid' && ticket.payment_status !== 'confirmed') {
                 res.status(400).json({
                     status: false,
-                    message: 'Can only refund debit transactions',
+                    message: 'Can only refund a paid ticket',
                     code: 400
                 });
                 return;
             }
 
-            // Create refund transaction
-            const refund = await pgpDb.one(`
-                INSERT INTO wallet_transaction (customer_id, amount, type, status, description, created_at)
-                VALUES ($1, $2, 'credit', 'paid', $3, CURRENT_TIMESTAMP)
-                RETURNING *
-            `, [
-                transaction.customer_id,
-                transaction.amount,
-                `Refund for transaction #${transactionId} - ${reason}`
-            ]);
+            // Refund goes to the wallet regardless of the original payment
+            // method (cash/mobile money can't be auto-reversed) — same
+            // deliberate rule booking cancellations follow, see
+            // WalletRepository.recordRefund and BOOKING_MODULE_NOTES.md.
+            const refundTx = await WalletRepository.recordRefund(
+                ticket.customer_id,
+                ticket.total_price,
+                `Refund for ticket ${ticket.reference} - ${reason}`
+            );
 
-            // Update wallet balance
-            await pgpDb.none(`
-                UPDATE wallet
-                SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP
-                WHERE customer_id = $2
-            `, [transaction.amount, transaction.customer_id]);
+            await AdminTransactionsRepository.markRefunded(transactionId);
 
             res.status(200).json({
                 status: true,
                 message: I18n.t('refund_processed', lang),
-                body: refund,
+                body: refundTx,
                 code: 200
             });
         } catch (error) {

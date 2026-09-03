@@ -42,7 +42,7 @@ class AddressService {
         RETURNING *
       `;
             const values = [
-                data.customerId, data.label, data.name, data.phone, data.address,
+                data.customerId, data.label, data.fullName, data.phoneNumber, data.address,
                 data.street, data.city, data.building, data.landmark,
                 data.latitude, data.longitude, data.isDefault || false
             ];
@@ -55,7 +55,7 @@ class AddressService {
             throw error;
         }
         finally {
-            client.release();
+            // Connection is managed by pg-promise
         }
     }
     /**
@@ -102,7 +102,7 @@ class AddressService {
             throw error;
         }
         finally {
-            client.release();
+            // Connection is managed by pg-promise
         }
     }
     /**

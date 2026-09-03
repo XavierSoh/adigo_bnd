@@ -6,11 +6,16 @@
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { requireEnv } from '../utils/env';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'adigo_secret_key_2025';
+const JWT_SECRET = requireEnv('JWT_SECRET');
 
 interface JWTPayload {
-    id: number;
+    // Staff/user tokens carry `id` (see user.repository.ts), customer tokens
+    // carry `customerId` (see customer.repository.ts) — normalize both onto
+    // req.userId below so downstream code has a single field to read.
+    id?: number;
+    customerId?: number;
     email: string;
     role?: string;
 }
@@ -111,7 +116,7 @@ export const optionalAuthMiddleware = (req: Request, res: Response, next: NextFu
 
         if (token) {
             const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
-            req.userId = decoded.id;
+            req.userId = decoded.id ?? decoded.customerId;
             req.userEmail = decoded.email;
             req.userRole = decoded.role;
         }

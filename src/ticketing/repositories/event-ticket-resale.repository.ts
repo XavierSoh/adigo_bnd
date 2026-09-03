@@ -1,4 +1,6 @@
-import pgpDb from '../../config/pgdb';
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult, pgTransaction } from "../../utils/prisma-compat";
 import {
     EventTicketResale,
     EventTicketResaleCreateDto,
@@ -24,7 +26,7 @@ export class EventTicketResaleRepository {
     ): Promise<{ status: boolean; message: string; body?: EventTicketResale; code: number }> {
         try {
             // Verify ticket exists and is resellable
-            const ticket = await pgpDb.oneOrNone(`
+            const ticket = await pgOneOrNone(`
                 SELECT
                     id,
                     status,
@@ -71,7 +73,7 @@ export class EventTicketResaleRepository {
             }
 
             // Check if ticket is already listed
-            const existingListing = await pgpDb.oneOrNone(`
+            const existingListing = await pgOneOrNone(`
                 SELECT id, status
                 FROM event_ticket_resale
                 WHERE ticket_purchase_id = $1
@@ -88,7 +90,7 @@ export class EventTicketResaleRepository {
             }
 
             // Create resale listing
-            const resale = await pgpDb.one(`
+            const resale = await pgOne(`
                 INSERT INTO event_ticket_resale (
                     ticket_purchase_id,
                     event_id,
@@ -139,7 +141,7 @@ export class EventTicketResaleRepository {
      */
     static async findById(id: number): Promise<{ status: boolean; message: string; body?: any; code: number }> {
         try {
-            const resale = await pgpDb.oneOrNone(`
+            const resale = await pgOneOrNone(`
                 SELECT
                     r.*,
                     json_build_object(
@@ -205,7 +207,7 @@ export class EventTicketResaleRepository {
      */
     static async findByResaleCode(resaleCode: string): Promise<{ status: boolean; message: string; body?: any; code: number }> {
         try {
-            const resale = await pgpDb.oneOrNone(`
+            const resale = await pgOneOrNone(`
                 SELECT
                     r.*,
                     json_build_object(
@@ -295,7 +297,7 @@ export class EventTicketResaleRepository {
             const limit = params.limit || 50;
             const offset = params.offset || 0;
 
-            const resales = await pgpDb.any(`
+            const resales = await pgAny(`
                 SELECT
                     r.*,
                     json_build_object(
@@ -340,7 +342,7 @@ export class EventTicketResaleRepository {
      */
     static async findActiveByEvent(eventId: number): Promise<{ status: boolean; message: string; body?: any[]; code: number }> {
         try {
-            const resales = await pgpDb.any(`
+            const resales = await pgAny(`
                 SELECT
                     r.*,
                     json_build_object(
@@ -381,7 +383,7 @@ export class EventTicketResaleRepository {
     ): Promise<{ status: boolean; message: string; body?: any; code: number }> {
         try {
             // Get resale listing
-            const resale = await pgpDb.oneOrNone(`
+            const resale = await pgOneOrNone(`
                 SELECT * FROM event_ticket_resale
                 WHERE id = $1
                 AND status = 'listed'
@@ -398,7 +400,7 @@ export class EventTicketResaleRepository {
 
             // Check if expired
             if (resale.expires_at && new Date(resale.expires_at) < new Date()) {
-                await pgpDb.none(`
+                await pgNone(`
                     UPDATE event_ticket_resale
                     SET status = 'expired'
                     WHERE id = $1
@@ -421,7 +423,7 @@ export class EventTicketResaleRepository {
             }
 
             // Process payment (wallet deduction)
-            const buyer = await pgpDb.oneOrNone(
+            const buyer = await pgOneOrNone(
                 'SELECT wallet_balance FROM customer WHERE id = $1',
                 [purchaseData.buyer_id]
             );
@@ -435,23 +437,23 @@ export class EventTicketResaleRepository {
             }
 
             // Start transaction
-            await pgpDb.tx(async t => {
+            await pgTransaction(async t => {
                 // Deduct from buyer
-                await t.none(`
+                await pgNone(`
                     UPDATE customer
                     SET wallet_balance = wallet_balance - $2
                     WHERE id = $1
-                `, [purchaseData.buyer_id, resale.resale_price]);
+                `, [purchaseData.buyer_id, resale.resale_price], t);
 
                 // Credit seller (90%)
-                await t.none(`
+                await pgNone(`
                     UPDATE customer
                     SET wallet_balance = wallet_balance + $2
                     WHERE id = $1
-                `, [resale.seller_id, resale.seller_receives]);
+                `, [resale.seller_id, resale.seller_receives], t);
 
                 // Update resale status
-                await t.none(`
+                await pgNone(`
                     UPDATE event_ticket_resale
                     SET
                         status = 'sold',
@@ -466,14 +468,14 @@ export class EventTicketResaleRepository {
                     purchaseData.buyer_id,
                     purchaseData.payment_method,
                     purchaseData.payment_reference || null
-                ]);
+                ], t);
 
                 // Transfer ticket ownership
-                await t.none(`
+                await pgNone(`
                     UPDATE event_ticket_purchase
                     SET customer_id = $2
                     WHERE id = $1
-                `, [resale.ticket_purchase_id, purchaseData.buyer_id]);
+                `, [resale.ticket_purchase_id, purchaseData.buyer_id], t);
             });
 
             console.log(`💰 Ticket resale completed: ${resale.resale_code}`);
@@ -539,7 +541,7 @@ export class EventTicketResaleRepository {
 
             params.push(id);
 
-            const resale = await pgpDb.oneOrNone(`
+            const resale = await pgOneOrNone(`
                 UPDATE event_ticket_resale
                 SET ${updates.join(', ')}
                 WHERE id = $${paramIndex}
@@ -581,7 +583,7 @@ export class EventTicketResaleRepository {
         reason?: string
     ): Promise<{ status: boolean; message: string; code: number }> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event_ticket_resale
                 SET
                     status = 'cancelled',
@@ -622,7 +624,7 @@ export class EventTicketResaleRepository {
      */
     static async expireOldListings(): Promise<number> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event_ticket_resale
                 SET status = 'expired'
                 WHERE status = 'listed'
@@ -657,7 +659,7 @@ export class EventTicketResaleRepository {
                 params.push(eventId);
             }
 
-            const stats = await pgpDb.one(`
+            const stats = await pgOne(`
                 SELECT
                     COUNT(*) as total_listings,
                     COUNT(*) FILTER (WHERE status = 'listed') as active_listings,
@@ -689,7 +691,7 @@ export class EventTicketResaleRepository {
      */
     static async softDelete(id: number, deleted_by?: number): Promise<{ status: boolean; message: string; code: number }> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event_ticket_resale
                 SET
                     is_deleted = TRUE,

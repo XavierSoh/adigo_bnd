@@ -1,13 +1,23 @@
 import { Router } from "express";
 import { BookingController } from "../controllers/booking.controller";
-// import { authMiddleware } from "../middlewares/auth.middleware"; // Si vous avez un middleware d'authentification
+import { authMiddleware } from "../middleware/auth.middleware";
 
 const bookingRouter = Router();
 
+// Real, verified Orange Money payment flow (pending booking -> confirmed
+// only once Orange Money confirms the charge). Scoped auth on just this
+// route — the rest of this router is a separate, already-flagged gap.
+bookingRouter.post("/pay/orange-money", authMiddleware, BookingController.initiateOrangeMoneyPayment);
+
 // Routes principales CRUD
-bookingRouter.post("/multiple", BookingController.createMultiple);
-bookingRouter.post("/batch", BookingController.createBatch);
-bookingRouter.post("/", BookingController.create);
+// Auth required: a customer booking for themselves must be logged in
+// (customer_id is checked against the token in the controller), and staff
+// booking on a customer's behalf at the counter still needs a valid staff
+// token. The rest of this router (search/statistics/list/delete/etc.) is
+// a separate, already-flagged gap — see the production audit.
+bookingRouter.post("/multiple", authMiddleware, BookingController.createMultiple);
+bookingRouter.post("/batch", authMiddleware, BookingController.createBatch);
+bookingRouter.post("/", authMiddleware, BookingController.create);
 bookingRouter.get("/", BookingController.getAll);
 
 // Routes spécialisées - Disponibilité et sièges (MUST be before /:id)
@@ -30,8 +40,8 @@ bookingRouter.get("/soft-deleted", BookingController.getSoftDeleted);
 
 
 // Booking management operations (MUST be before /:id)
-bookingRouter.put("/:booking_id/cancel", BookingController.cancelSingle);
-bookingRouter.put("/:booking_id/modify", BookingController.modifySingle);
+bookingRouter.put("/:booking_id/cancel", authMiddleware, BookingController.cancelSingle);
+bookingRouter.put("/:booking_id/modify", authMiddleware, BookingController.modifySingle);
 // Get by ID (MUST be after all specific routes)
 bookingRouter.get("/:id", BookingController.getById);
 

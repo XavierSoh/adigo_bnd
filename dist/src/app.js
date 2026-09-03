@@ -42,8 +42,11 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
+const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const dbInit = __importStar(require("./config/init_db"));
 const language_middleware_1 = require("./middleware/language.middleware");
+const swagger_1 = require("./swagger/swagger");
 // Routers
 const users_router_1 = __importDefault(require("./routes/users.router"));
 const staff_router_1 = __importDefault(require("./routes/staff.router"));
@@ -67,6 +70,8 @@ const ticketing_1 = __importDefault(require("./routes/ticketing"));
 const vtc_router_1 = __importDefault(require("./routes/vtc.router"));
 const food_router_1 = __importDefault(require("./routes/food.router"));
 const parcel_router_1 = __importDefault(require("./routes/parcel.router"));
+const payment_router_1 = __importDefault(require("./routes/payment.router"));
+require("./services/payment/settlement-handlers");
 const app = (0, express_1.default)();
 // Middlewares
 app.use(express_1.default.json({ limit: "100mb" }));
@@ -75,6 +80,19 @@ app.use((0, helmet_1.default)());
 app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, '../uploads')));
 // Language detection middleware (doit être après express.json())
 app.use(language_middleware_1.languageMiddleware);
+// Home page
+app.get('/', (req, res) => {
+    const publicPath = path_1.default.join(__dirname, '../src/public/index.html');
+    const distPublicPath = path_1.default.join(__dirname, '../public/index.html');
+    const filePath = fs_1.default.existsSync(publicPath) ? publicPath : distPublicPath;
+    res.sendFile(filePath);
+});
+// Swagger documentation
+app.use('/v1/api-docs', swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(swagger_1.swaggerSpec, {
+    swaggerOptions: {
+        persistAuthorization: true,
+    },
+}));
 // Routes
 app.use('/v1/api/users', users_router_1.default);
 app.use('/v1/api/staff', staff_router_1.default);
@@ -102,6 +120,8 @@ app.use('/v1/api/vtc', vtc_router_1.default);
 app.use('/v1/api/food', food_router_1.default);
 // Parcel Delivery Module
 app.use('/v1/api/parcel', parcel_router_1.default);
+// Payments (Orange Money)
+app.use('/v1/api/payments', payment_router_1.default);
 // ✅ Initialiser la base de données de manière asynchrone
 async function initializeApp() {
     try {

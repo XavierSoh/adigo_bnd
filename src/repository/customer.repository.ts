@@ -1,10 +1,38 @@
 
-import pgpDb from "../config/pgdb";
+// Migrated to Prisma's native model API (prisma.customer.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration").
+import { Prisma } from "@prisma/client";
+import prismaDb from "../config/prismaClient";
 import { Customer } from "../models/customer.model";
 import ResponseModel from "../models/response.model";
-import { kCustomer } from "../utils/table_names";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { requireEnv } from "../utils/env";
+
+// Field sets kept identical to the two different RETURNING/SELECT column
+// lists the original raw SQL used (findById's list and update's list are
+// NOT the same set — findById includes fcm_token/timestamps but not the
+// payment-number defaults, update is the reverse) — preserved exactly
+// rather than unified, to not change either endpoint's response shape.
+const findByIdSelect = {
+    id: true, first_name: true, last_name: true, email: true, phone: true,
+    date_of_birth: true, gender: true, address: true, city: true,
+    id_card_number: true, id_card_type: true, preferred_language: true,
+    notification_enabled: true, preferred_seat_type: true, loyalty_points: true,
+    customer_tier: true, account_status: true, email_verified: true, phone_verified: true,
+    profile_picture: true, wallet_balance: true, fcm_token: true,
+    created_at: true, updated_at: true, last_login: true,
+} satisfies Prisma.customerSelect;
+
+const updateReturnSelect = {
+    id: true, first_name: true, last_name: true, email: true, phone: true,
+    date_of_birth: true, gender: true, address: true, city: true,
+    id_card_number: true, id_card_type: true, preferred_language: true,
+    notification_enabled: true, preferred_seat_type: true, loyalty_points: true,
+    customer_tier: true, account_status: true, email_verified: true, phone_verified: true,
+    profile_picture: true, wallet_balance: true, default_orange_money_number: true,
+    default_mtn_mobile_money_number: true,
+} satisfies Prisma.customerSelect;
 
 export class CustomerRepository {
     // Stockage temporaire des codes de reset (à remplacer par une vraie base/cache en prod)
@@ -16,69 +44,71 @@ export class CustomerRepository {
     static async verifyResetCode(email: string, code: string): Promise<boolean> {
         return this.resetCodes[email] === code;
     }
+
     static async updatePasswordByEmail(email: string, newPassword: string): Promise<ResponseModel> {
         try {
             const hashed = await bcrypt.hash(newPassword, 10);
-            const result = await pgpDb.oneOrNone(
-                `UPDATE ${kCustomer} SET password = $1 WHERE email = $2 AND is_deleted = FALSE RETURNING id, email`,
-                [hashed, email]
-            );
-            if (!result) {
+            // `email` is @unique, but the original also guarded on
+            // is_deleted=FALSE, which a single-unique-field `.update()`
+            // can't express — updateMany+refetch preserves that guard.
+            const result = await prismaDb.customer.updateMany({
+                where: { email, is_deleted: false },
+                data: { password: hashed },
+            });
+            if (result.count === 0) {
                 return { status: false, message: "Client non trouvé", code: 404 };
             }
-            // Suppression du code de reset après succès
+            const updated = await prismaDb.customer.findUnique({
+                where: { email },
+                select: { id: true, email: true },
+            });
             delete this.resetCodes[email];
-            return { status: true, message: "Mot de passe réinitialisé", body: result, code: 200 };
+            return { status: true, message: "Mot de passe réinitialisé", body: updated, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la mise à jour du mot de passe", code: 500 };
         }
     }
+
     // Create new customer
     static async create(customer: Customer): Promise<ResponseModel> {
         try {
-            // Hash password
             const hashedPassword = await bcrypt.hash(customer.password, 10);
 
-            const result = await pgpDb.one(
-                `INSERT INTO ${kCustomer} (
-                    first_name, last_name, email, phone, password,
-                    date_of_birth, gender, address, city,
-                    id_card_number, id_card_type, preferred_language,
-                    notification_enabled, preferred_seat_type,
-                    loyalty_points, customer_tier, account_status,
-                    email_verified, phone_verified
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                RETURNING id, first_name, last_name, email, phone, date_of_birth, gender,
-                          address, city, id_card_number, id_card_type, preferred_language,
-                          notification_enabled, preferred_seat_type, loyalty_points,
-                          customer_tier, account_status, email_verified, phone_verified, created_at`,
-                [
-                    customer.first_name,
-                    customer.last_name,
-                    customer.email,
-                    customer.phone,
-                    hashedPassword,
-                    customer.date_of_birth,
-                    customer.gender,
-                    customer.address,
-                    customer.city,
-                    customer.id_card_number,
-                    customer.id_card_type,
-                    customer.preferred_language ?? 'fr',
-                    customer.notification_enabled ?? true,
-                    customer.preferred_seat_type,
-                    customer.loyalty_points ?? 0,
-                    customer.customer_tier ?? 'regular',
-                    customer.account_status ?? 'active',
-                    customer.email_verified ?? false,
-                    customer.phone_verified ?? false
-                ]
-            );
+            const result = await prismaDb.customer.create({
+                data: {
+                    first_name: customer.first_name,
+                    last_name: customer.last_name,
+                    email: customer.email,
+                    phone: customer.phone,
+                    password: hashedPassword,
+                    date_of_birth: customer.date_of_birth,
+                    gender: customer.gender,
+                    address: customer.address,
+                    city: customer.city,
+                    id_card_number: customer.id_card_number,
+                    id_card_type: customer.id_card_type,
+                    preferred_language: customer.preferred_language ?? 'fr',
+                    notification_enabled: customer.notification_enabled ?? true,
+                    preferred_seat_type: customer.preferred_seat_type,
+                    loyalty_points: customer.loyalty_points ?? 0,
+                    customer_tier: customer.customer_tier ?? 'regular',
+                    account_status: customer.account_status ?? 'active',
+                    email_verified: customer.email_verified ?? false,
+                    phone_verified: customer.phone_verified ?? false,
+                },
+                select: {
+                    id: true, first_name: true, last_name: true, email: true, phone: true,
+                    date_of_birth: true, gender: true, address: true, city: true,
+                    id_card_number: true, id_card_type: true, preferred_language: true,
+                    notification_enabled: true, preferred_seat_type: true, loyalty_points: true,
+                    customer_tier: true, account_status: true, email_verified: true,
+                    phone_verified: true, created_at: true,
+                },
+            });
 
-            // Generate JWT token for auto-login after registration
             const token = jwt.sign(
                 { customerId: result.id, email: result.email },
-                process.env.JWT_SECRET!,
+                requireEnv('JWT_SECRET'),
                 { expiresIn: '7d' }
             );
 
@@ -88,11 +118,18 @@ export class CustomerRepository {
                 body: { customer: result, token },
                 code: 201
             };
-        } catch (error: any) {
-            console.log(`error ....  ${error}`)
-            if (error.code === '23505') { // Unique violation
-                return { status: false, message: "ERREUR_INCONNUE | UNKNOW_ERROR", code: 409 };
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+                const target = Array.isArray(error.meta?.target) ? (error.meta!.target as string[]) : [];
+                const field = target.includes('email') ? 'email' : target.includes('phone') ? 'phone' : null;
+                const message = field === 'email'
+                    ? "Un client avec cet email existe déjà"
+                    : field === 'phone'
+                        ? "Un client avec ce numéro de téléphone existe déjà"
+                        : "Un client avec ces informations existe déjà";
+                return { status: false, message, code: 409 };
             }
+            console.log(`error ....  ${error}`);
             return { status: false, message: "ERREUR_INCONNUE | UNKNOW_ERROR", code: 500 };
         }
     }
@@ -100,26 +137,15 @@ export class CustomerRepository {
     // Find by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            console.log(`🔍 [CustomerRepository] findById called with ID: ${id}`);
-            const customer = await pgpDb.oneOrNone(
-                `SELECT id, first_name, last_name, email, phone, date_of_birth, gender,
-                        address, city, id_card_number, id_card_type, preferred_language,
-                        notification_enabled, preferred_seat_type, loyalty_points,
-                        customer_tier, account_status, email_verified, phone_verified,
-                        profile_picture, wallet_balance, fcm_token,
-                        created_at, updated_at, last_login
-                FROM ${kCustomer} WHERE id = $1 AND is_deleted = FALSE`,
-                [id]
-            );
-
-            console.log(`📊 [CustomerRepository] Query result:`, customer ? 'Found customer' : 'No customer found');
+            const customer = await prismaDb.customer.findFirst({
+                where: { id, is_deleted: false },
+                select: findByIdSelect,
+            });
 
             if (!customer) {
-                console.log(`❌ [CustomerRepository] Customer not found with ID: ${id}`);
                 return { status: false, message: "Client non trouvé", code: 404 };
             }
 
-            console.log(`✅ [CustomerRepository] Customer found:`, customer.id, customer.email);
             return { status: true, message: "Client trouvé", body: customer, code: 200 };
         } catch (error) {
             console.error(`❌ [CustomerRepository] Error in findById:`, error);
@@ -130,10 +156,9 @@ export class CustomerRepository {
     // Find by email
     static async findByEmail(email: string): Promise<ResponseModel> {
         try {
-            const customer = await pgpDb.oneOrNone(
-                `SELECT * FROM ${kCustomer} WHERE email = $1 AND is_deleted = FALSE`,
-                [email]
-            );
+            const customer = await prismaDb.customer.findFirst({
+                where: { email, is_deleted: false },
+            });
 
             if (!customer) {
                 return { status: false, message: "Client non trouvé", code: 404 };
@@ -148,10 +173,9 @@ export class CustomerRepository {
     // Find by phone
     static async findByPhone(phone: string): Promise<ResponseModel> {
         try {
-            const customer = await pgpDb.oneOrNone(
-                `SELECT * FROM ${kCustomer} WHERE phone = $1 AND is_deleted = FALSE`,
-                [phone]
-            );
+            const customer = await prismaDb.customer.findFirst({
+                where: { phone, is_deleted: false },
+            });
 
             if (!customer) {
                 return { status: false, message: "Client non trouvé", code: 404 };
@@ -166,79 +190,52 @@ export class CustomerRepository {
     // Update customer
     static async update(id: number, customer: Partial<Customer>): Promise<ResponseModel> {
         try {
-            console.log('📝 [CustomerRepository] Updating customer ID:', id);
-            console.log('📝 [CustomerRepository] Data before processing:', customer);
-
-            // Hash password if provided
             if (customer.password) {
                 customer.password = await bcrypt.hash(customer.password, 10);
             }
 
-            console.log('📝 [CustomerRepository] Executing UPDATE query...');
-            const result = await pgpDb.oneOrNone(
-                `UPDATE ${kCustomer} SET
-                    first_name = COALESCE($1, first_name),
-                    last_name = COALESCE($2, last_name),
-                    email = COALESCE($3, email),
-                    phone = COALESCE($4, phone),
-                    password = COALESCE($5, password),
-                    date_of_birth = COALESCE($6, date_of_birth),
-                    gender = COALESCE($7, gender),
-                    address = COALESCE($8, address),
-                    city = COALESCE($9, city),
-                    id_card_number = COALESCE($10, id_card_number),
-                    id_card_type = COALESCE($11, id_card_type),
-                    preferred_language = COALESCE($12, preferred_language),
-                    notification_enabled = COALESCE($13, notification_enabled),
-                    preferred_seat_type = COALESCE($14, preferred_seat_type),
-                    account_status = COALESCE($15, account_status),
-                    profile_picture = COALESCE($16, profile_picture),
-                    default_orange_money_number = COALESCE($17, default_orange_money_number),
-                    default_mtn_mobile_money_number = COALESCE($18, default_mtn_mobile_money_number),
-                    updated_at = NOW()
-                WHERE id = $19 AND is_deleted = FALSE
-                RETURNING id, first_name, last_name, email, phone, date_of_birth, gender,
-                          address, city, id_card_number, id_card_type, preferred_language,
-                          notification_enabled, preferred_seat_type, loyalty_points,
-                          customer_tier, account_status, email_verified, phone_verified,
-                          profile_picture, wallet_balance, default_orange_money_number,
-                          default_mtn_mobile_money_number`,
-                [
-                    customer.first_name,
-                    customer.last_name,
-                    customer.email,
-                    customer.phone,
-                    customer.password,
-                    customer.date_of_birth,
-                    customer.gender,
-                    customer.address,
-                    customer.city,
-                    customer.id_card_number,
-                    customer.id_card_type,
-                    customer.preferred_language,
-                    customer.notification_enabled,
-                    customer.preferred_seat_type,
-                    customer.account_status,
-                    customer.profile_picture,
-                    customer.default_orange_money_number,
-                    customer.default_mtn_mobile_money_number,
-                    id
-                ]
-            );
+            // Original used `COALESCE($n, column)` per field: an
+            // undefined/null param leaves the column untouched. Prisma has
+            // no COALESCE — reproduced by only including keys that are
+            // neither undefined nor null (both cases fell through to
+            // "unchanged" in the original either way).
+            const data: Prisma.customerUncheckedUpdateInput = { updated_at: new Date() };
+            if (customer.first_name != null) data.first_name = customer.first_name;
+            if (customer.last_name != null) data.last_name = customer.last_name;
+            if (customer.email != null) data.email = customer.email;
+            if (customer.phone != null) data.phone = customer.phone;
+            if (customer.password != null) data.password = customer.password;
+            if (customer.date_of_birth != null) data.date_of_birth = customer.date_of_birth;
+            if (customer.gender != null) data.gender = customer.gender;
+            if (customer.address != null) data.address = customer.address;
+            if (customer.city != null) data.city = customer.city;
+            if (customer.id_card_number != null) data.id_card_number = customer.id_card_number;
+            if (customer.id_card_type != null) data.id_card_type = customer.id_card_type;
+            if (customer.preferred_language != null) data.preferred_language = customer.preferred_language;
+            if (customer.notification_enabled != null) data.notification_enabled = customer.notification_enabled;
+            if (customer.preferred_seat_type != null) data.preferred_seat_type = customer.preferred_seat_type;
+            if (customer.account_status != null) data.account_status = customer.account_status;
+            if (customer.profile_picture != null) data.profile_picture = customer.profile_picture;
+            if (customer.default_orange_money_number != null) data.default_orange_money_number = customer.default_orange_money_number;
+            if (customer.default_mtn_mobile_money_number != null) data.default_mtn_mobile_money_number = customer.default_mtn_mobile_money_number;
 
-            console.log('📝 [CustomerRepository] Query result:', result);
+            const result = await prismaDb.customer.updateMany({
+                where: { id, is_deleted: false },
+                data,
+            });
 
-            if (!result) {
-                console.log('❌ [CustomerRepository] Customer not found with ID:', id);
+            if (result.count === 0) {
                 return { status: false, message: "Client non trouvé", code: 404 };
             }
 
-            console.log('✅ [CustomerRepository] Customer updated successfully');
-            return { status: true, message: "Client mis à jour", body: result, code: 200 };
+            const updated = await prismaDb.customer.findUnique({
+                where: { id },
+                select: updateReturnSelect,
+            });
+
+            return { status: true, message: "Client mis à jour", body: updated, code: 200 };
         } catch (error) {
             console.error('❌ [CustomerRepository] Error updating customer:', error);
-            console.error('❌ [CustomerRepository] Error details:', error instanceof Error ? error.message : error);
-            console.error('❌ [CustomerRepository] Stack trace:', error instanceof Error ? error.stack : 'N/A');
             return { status: false, message: "Erreur lors de la mise à jour du client", code: 500 };
         }
     }
@@ -246,17 +243,12 @@ export class CustomerRepository {
     // Soft delete
     static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
-                `UPDATE ${kCustomer} SET
-                    is_deleted = TRUE,
-                    deleted_at = NOW(),
-                    deleted_by = $2,
-                    updated_at = NOW()
-                WHERE id = $1 AND is_deleted = FALSE`,
-                [id, deletedBy]
-            );
+            const result = await prismaDb.customer.updateMany({
+                where: { id, is_deleted: false },
+                data: { is_deleted: true, deleted_at: new Date(), deleted_by: deletedBy, updated_at: new Date() },
+            });
 
-            if (result.rowCount === 0) {
+            if (result.count === 0) {
                 return { status: false, message: "Client non trouvé ou déjà supprimé", code: 404 };
             }
 
@@ -269,22 +261,21 @@ export class CustomerRepository {
     // Restore
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
-                `UPDATE ${kCustomer} SET
-                    is_deleted = FALSE,
-                    deleted_at = NULL,
-                    deleted_by = NULL,
-                    updated_at = NOW()
-                WHERE id = $1 AND is_deleted = TRUE
-                RETURNING id, first_name, last_name, email, phone`,
-                [id]
-            );
+            const result = await prismaDb.customer.updateMany({
+                where: { id, is_deleted: true },
+                data: { is_deleted: false, deleted_at: null, deleted_by: null, updated_at: new Date() },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return { status: false, message: "Client non trouvé", code: 404 };
             }
 
-            return { status: true, message: "Client restauré", body: result, code: 200 };
+            const restored = await prismaDb.customer.findUnique({
+                where: { id },
+                select: { id: true, first_name: true, last_name: true, email: true, phone: true },
+            });
+
+            return { status: true, message: "Client restauré", body: restored, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la restauration du client", code: 500 };
         }
@@ -293,17 +284,12 @@ export class CustomerRepository {
     // Hard delete
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
-                `DELETE FROM ${kCustomer} WHERE id = $1`,
-                [id]
-            );
-
-            if (result.rowCount === 0) {
-                return { status: false, message: "Client non trouvé", code: 404 };
-            }
-
+            await prismaDb.customer.delete({ where: { id } });
             return { status: true, message: "Client supprimé définitivement", code: 200 };
         } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+                return { status: false, message: "Client non trouvé", code: 404 };
+            }
             return { status: false, message: "Erreur lors de la suppression du client", code: 500 };
         }
     }
@@ -311,13 +297,10 @@ export class CustomerRepository {
     // Find all customers
     static async findAll(includeDeleted: boolean = false): Promise<ResponseModel> {
         try {
-            const whereClause = includeDeleted ? '' : 'WHERE is_deleted = FALSE';
-
-            const customers = await pgpDb.any(
-                `SELECT *
-                FROM ${kCustomer} ${whereClause}
-                ORDER BY created_at DESC`
-            );
+            const customers = await prismaDb.customer.findMany({
+                where: includeDeleted ? {} : { is_deleted: false },
+                orderBy: { created_at: 'desc' },
+            });
             return { status: true, message: "Liste des clients récupérée", body: customers, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la récupération des clients", code: 500 };
@@ -325,104 +308,64 @@ export class CustomerRepository {
     }
 
     // Advanced search with filters
-static async search(filters: {
-    searchTerm?: string;
-    accountStatus?: string;
-    customerTier?: string;
-    emailVerified?: boolean;
-    phoneVerified?: boolean;
-    minLoyaltyPoints?: number;
-    city?: string;
-}): Promise<ResponseModel> {
-    try { 
-        let query = `
-            SELECT *
-            FROM ${kCustomer}
-            WHERE is_deleted = FALSE
-        `;
+    static async search(filters: {
+        searchTerm?: string;
+        accountStatus?: string;
+        customerTier?: string;
+        emailVerified?: boolean;
+        phoneVerified?: boolean;
+        minLoyaltyPoints?: number;
+        city?: string;
+    }): Promise<ResponseModel> {
+        try {
+            const where: Prisma.customerWhereInput = { is_deleted: false };
 
-        const params: any[] = [];
-        let paramIndex = 1;
+            if (filters.searchTerm && filters.searchTerm.trim() !== '') {
+                const term = filters.searchTerm;
+                where.OR = [
+                    { first_name: { contains: term, mode: 'insensitive' } },
+                    { last_name: { contains: term, mode: 'insensitive' } },
+                    { email: { contains: term, mode: 'insensitive' } },
+                    { phone: { contains: term, mode: 'insensitive' } },
+                ];
+            }
+            if (filters.accountStatus) where.account_status = filters.accountStatus;
+            if (filters.customerTier) where.customer_tier = filters.customerTier;
+            if (filters.emailVerified !== undefined) where.email_verified = filters.emailVerified;
+            if (filters.phoneVerified !== undefined) where.phone_verified = filters.phoneVerified;
+            if (filters.minLoyaltyPoints !== undefined) where.loyalty_points = { gte: filters.minLoyaltyPoints };
+            if (filters.city && filters.city.trim() !== '') {
+                where.city = { contains: filters.city, mode: 'insensitive' };
+            }
 
-        // Search term (name, email, or phone)
-        if (filters.searchTerm && filters.searchTerm.trim() !== '') {
-            query += ` AND (
-                first_name ILIKE $${paramIndex} OR 
-                last_name ILIKE $${paramIndex} OR 
-                email ILIKE $${paramIndex} OR 
-                phone ILIKE $${paramIndex}
-            )`;
-            params.push(`%${filters.searchTerm}%`);
-            paramIndex++;
+            const customers = await prismaDb.customer.findMany({
+                where,
+                orderBy: { created_at: 'desc' },
+                take: 50,
+            });
+
+            return {
+                status: true,
+                message: "Recherche effectuée",
+                body: customers,
+                code: 200
+            };
+        } catch (error) {
+            console.error("Search Error:", error);
+            return {
+                status: false,
+                message: "Erreur lors de la recherche",
+                code: 500
+            };
         }
-
-        // Account status filter
-        if (filters.accountStatus) {
-            query += ` AND account_status = $${paramIndex}`;
-            params.push(filters.accountStatus);
-            paramIndex++;
-        }
-
-        // Customer tier filter
-        if (filters.customerTier) {
-            query += ` AND customer_tier = $${paramIndex}`;
-            params.push(filters.customerTier);
-            paramIndex++;
-        }
-
-        // Email verified filter
-        if (filters.emailVerified !== undefined) {
-            query += ` AND email_verified = $${paramIndex}`;
-            params.push(filters.emailVerified);
-            paramIndex++;
-        }
-
-        // Phone verified filter
-        if (filters.phoneVerified !== undefined) {
-            query += ` AND phone_verified = $${paramIndex}`;
-            params.push(filters.phoneVerified);
-            paramIndex++;
-        }
-
-        // Minimum loyalty points
-        if (filters.minLoyaltyPoints !== undefined) {
-            query += ` AND loyalty_points >= $${paramIndex}`;
-            params.push(filters.minLoyaltyPoints);
-            paramIndex++;
-        }
-
-        // City filter
-        if (filters.city && filters.city.trim() !== '') {
-            query += ` AND city ILIKE $${paramIndex}`;
-            params.push(`%${filters.city}%`);
-            paramIndex++;
-        }
-        query += ` ORDER BY created_at DESC LIMIT 50`;
-        const customers = await pgpDb.any(query, params);
-        return { 
-            status: true, 
-            message: "Recherche effectuée", 
-            body: customers, 
-            code: 200 
-        };
-    } catch (error) {
-        console.error("Search Error:", error);
-        return { 
-            status: false, 
-            message: "Erreur lors de la recherche", 
-            code: 500 
-        };
     }
-}
 
     // Login/Authentication
     static async authenticate(emailOrPhone: string, password: string): Promise<ResponseModel> {
         try {
-            const customer = await pgpDb.oneOrNone(
-                `SELECT * FROM ${kCustomer}
-                WHERE (email = $1 OR phone = $1) AND is_deleted = FALSE`,
-                [emailOrPhone]
-            );
+            const customer = await prismaDb.customer.findFirst({
+                where: { OR: [{ email: emailOrPhone }, { phone: emailOrPhone }], is_deleted: false },
+            });
 
             if (!customer) {
                 return { status: false, message: "Identifiants incorrects", code: 401 };
@@ -438,26 +381,23 @@ static async search(filters: {
                 return { status: false, message: "Identifiants incorrects", code: 401 };
             }
 
-            // Update last login
-            await pgpDb.none(
-                `UPDATE ${kCustomer} SET last_login = NOW() WHERE id = $1`,
-                [customer.id]
-            );
+            await prismaDb.customer.update({
+                where: { id: customer.id },
+                data: { last_login: new Date() },
+            });
 
-            // Remove password from response
-            delete customer.password;
+            const { password: _pw, ...customerWithoutPassword } = customer;
 
-            // Generate JWT token
             const token = jwt.sign(
                 { customerId: customer.id, email: customer.email },
-                process.env.JWT_SECRET!,
+                requireEnv('JWT_SECRET'),
                 { expiresIn: '7d' }
             );
 
             return {
                 status: true,
                 message: "Connexion réussie",
-                body: { customer, token },
+                body: { customer: customerWithoutPassword, token },
                 code: 200
             };
         } catch (error) {
@@ -468,23 +408,23 @@ static async search(filters: {
     // Update loyalty points
     static async updateLoyaltyPoints(id: number, points: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
-                `UPDATE ${kCustomer} SET
-                    loyalty_points = loyalty_points + $1,
-                    updated_at = NOW()
-                WHERE id = $2 AND is_deleted = FALSE
-                RETURNING id, first_name, last_name, loyalty_points, customer_tier`,
-                [points, id]
-            );
+            const result = await prismaDb.customer.updateMany({
+                where: { id, is_deleted: false },
+                data: { loyalty_points: { increment: points }, updated_at: new Date() },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return { status: false, message: "Client non trouvé", code: 404 };
             }
 
-            // Check for tier upgrade
-            await this.checkAndUpdateTier(id, result.loyalty_points);
+            const updated = await prismaDb.customer.findUnique({
+                where: { id },
+                select: { id: true, first_name: true, last_name: true, loyalty_points: true, customer_tier: true },
+            });
 
-            return { status: true, message: "Points mis à jour", body: result, code: 200 };
+            await this.checkAndUpdateTier(id, updated!.loyalty_points ?? 0);
+
+            return { status: true, message: "Points mis à jour", body: updated, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la mise à jour des points", code: 500 };
         }
@@ -497,19 +437,26 @@ static async search(filters: {
         else if (points >= 5000) tier = 'gold';
         else if (points >= 1000) tier = 'silver';
 
-        await pgpDb.none(
-            `UPDATE ${kCustomer} SET customer_tier = $1 WHERE id = $2`,
-            [tier, id]
-        );
+        // Original ran a plain UPDATE with no is_deleted guard and no
+        // existence check (silent no-op if the id doesn't exist) —
+        // updateMany reproduces that silent-no-op exactly (unlike
+        // `.update()`, it never throws P2025).
+        await prismaDb.customer.updateMany({
+            where: { id },
+            data: { customer_tier: tier },
+        });
     }
 
     // Verify email
     static async verifyEmail(id: number): Promise<ResponseModel> {
         try {
-            await pgpDb.none(
-                `UPDATE ${kCustomer} SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
-                [id]
-            );
+            // Same silent-no-op-on-missing-id behavior as the original
+            // pgNone call — updateMany over `.update()` so a bad id still
+            // returns 200, not a 500 from an unhandled P2025.
+            await prismaDb.customer.updateMany({
+                where: { id },
+                data: { email_verified: true, updated_at: new Date() },
+            });
 
             return { status: true, message: "Email vérifié", code: 200 };
         } catch (error) {
@@ -520,10 +467,10 @@ static async search(filters: {
     // Verify phone
     static async verifyPhone(id: number): Promise<ResponseModel> {
         try {
-            await pgpDb.none(
-                `UPDATE ${kCustomer} SET phone_verified = TRUE, updated_at = NOW() WHERE id = $1`,
-                [id]
-            );
+            await prismaDb.customer.updateMany({
+                where: { id },
+                data: { phone_verified: true, updated_at: new Date() },
+            });
 
             return { status: true, message: "Téléphone vérifié", code: 200 };
         } catch (error) {
@@ -534,27 +481,37 @@ static async search(filters: {
     // Get statistics
     static async getStatistics(): Promise<ResponseModel> {
         try {
-            const stats = await pgpDb.one(
-                `SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN account_status = 'active' THEN 1 ELSE 0 END) as active,
-                    SUM(CASE WHEN account_status = 'suspended' THEN 1 ELSE 0 END) as suspended,
-                    SUM(CASE WHEN account_status = 'blocked' THEN 1 ELSE 0 END) as blocked,
-                    SUM(CASE WHEN customer_tier = 'platinum' THEN 1 ELSE 0 END) as platinum,
-                    SUM(CASE WHEN customer_tier = 'gold' THEN 1 ELSE 0 END) as gold,
-                    SUM(CASE WHEN customer_tier = 'silver' THEN 1 ELSE 0 END) as silver,
-                    SUM(CASE WHEN email_verified = TRUE THEN 1 ELSE 0 END) as email_verified,
-                    SUM(CASE WHEN phone_verified = TRUE THEN 1 ELSE 0 END) as phone_verified
-                FROM ${kCustomer}
-                WHERE is_deleted = FALSE`
-            );
+            // Original was one SQL statement with `SUM(CASE WHEN ...)`
+            // returning numeric-as-string/bigint-ish values. There's no
+            // conditional-SUM equivalent in the model API, so this is 9
+            // parallel `.count()` calls instead — same result shape, but
+            // now genuinely-typed `number` fields (a strict improvement:
+            // no more numeric-string/bigint leakage), at the cost of 9
+            // round trips instead of 1. Flagging the shape/type change,
+            // not silently declaring it identical.
+            const [total, active, suspended, blocked, platinum, gold, silver, emailVerified, phoneVerified] =
+                await Promise.all([
+                    prismaDb.customer.count({ where: { is_deleted: false } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, account_status: 'active' } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, account_status: 'suspended' } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, account_status: 'blocked' } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, customer_tier: 'platinum' } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, customer_tier: 'gold' } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, customer_tier: 'silver' } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, email_verified: true } }),
+                    prismaDb.customer.count({ where: { is_deleted: false, phone_verified: true } }),
+                ]);
+
+            const stats = {
+                total, active, suspended, blocked, platinum, gold, silver,
+                email_verified: emailVerified, phone_verified: phoneVerified,
+            };
 
             return { status: true, message: "Statistiques récupérées", body: stats, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la récupération des statistiques", code: 500 };
         }
     }
-
 
     // Bulk create customers
     static async bulkCreate(customers: Customer[]): Promise<ResponseModel> {
@@ -563,7 +520,6 @@ static async search(filters: {
                 return { status: false, message: "Aucun client à créer", code: 400 };
             }
 
-            // Hash passwords in parallel
             const hashedCustomers = await Promise.all(
                 customers.map(async (customer) => ({
                     ...customer,
@@ -578,36 +534,48 @@ static async search(filters: {
                 }))
             );
 
-            // Prepare columns and values
-            const columns = [
-                "first_name", "last_name", "email", "phone", "password",
-                "date_of_birth", "gender", "address", "city",
-                "id_card_number", "id_card_type", "preferred_language",
-                "notification_enabled", "preferred_seat_type",
-                "loyalty_points", "customer_tier", "account_status",
-                "email_verified", "phone_verified"
-            ];
-
-            const values = hashedCustomers.map(c => columns.map(col => (c as any)[col]));
-
-            // Build query
-            const valuePlaceholders = values.map(
-                (_, i) => `(${columns.map((_, j) => `$${i * columns.length + j + 1}`).join(", ")})`
-            ).join(", ");
-
-            const query = `
-                INSERT INTO ${kCustomer} (${columns.join(", ")})
-                VALUES ${valuePlaceholders}
-                RETURNING id, first_name, last_name, email, phone, date_of_birth, gender, address, city, created_at
-            `;
-
-            const flatValues = values.flat();
-
-            const result = await pgpDb.any(query, flatValues);
+            // Same pattern as agency.bulkCreate: `createMany` can't
+            // RETURNING, and there's no single unique column to safely
+            // re-query the whole batch by afterwards, so individual
+            // `create()` calls inside `$transaction([...])` preserve the
+            // original single-INSERT's all-or-nothing atomicity while
+            // still getting each row (with its generated id) back.
+            const result = await prismaDb.$transaction(
+                hashedCustomers.map((c) =>
+                    prismaDb.customer.create({
+                        data: {
+                            first_name: c.first_name,
+                            last_name: c.last_name,
+                            email: c.email,
+                            phone: c.phone,
+                            password: c.password,
+                            date_of_birth: c.date_of_birth,
+                            gender: c.gender,
+                            address: c.address,
+                            city: c.city,
+                            id_card_number: c.id_card_number,
+                            id_card_type: c.id_card_type,
+                            preferred_language: c.preferred_language,
+                            notification_enabled: c.notification_enabled,
+                            preferred_seat_type: c.preferred_seat_type,
+                            loyalty_points: c.loyalty_points,
+                            customer_tier: c.customer_tier,
+                            account_status: c.account_status,
+                            email_verified: c.email_verified,
+                            phone_verified: c.phone_verified,
+                        },
+                        select: {
+                            id: true, first_name: true, last_name: true, email: true,
+                            phone: true, date_of_birth: true, gender: true, address: true,
+                            city: true, created_at: true,
+                        },
+                    })
+                )
+            );
 
             return { status: true, message: "Clients créés avec succès", body: result, code: 201 };
-        } catch (error: any) {
-            if (error.code === '23505') {
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
                 return { status: false, message: "Certains emails ou téléphones sont déjà utilisés", code: 409 };
             }
             return { status: false, message: "Erreur lors de la création des clients", code: 500 };
@@ -617,20 +585,33 @@ static async search(filters: {
     // Update wallet balance
     static async updateWalletBalance(customerId: number, amount: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
-                `UPDATE ${kCustomer}
-                SET wallet_balance = COALESCE(wallet_balance, 0) + $1,
-                    updated_at = NOW()
-                WHERE id = $2 AND is_deleted = FALSE
-                RETURNING id, wallet_balance`,
-                [amount, customerId]
-            );
+            // SCHEMA DISCREPANCY FLAGGED: original used
+            // `COALESCE(wallet_balance, 0) + $1`, NULL-safe against a
+            // NULL column value. `wallet_balance` is a nullable
+            // `Int? @default(0)` column — the DB default protects normal
+            // rows, but any row that somehow has a genuine NULL there
+            // would go to NULL forever under `{increment}` (Prisma has no
+            // COALESCE-in-update escape hatch), whereas the original would
+            // have healed it back to a number. Kept `{increment}` anyway
+            // since it's the correct atomic native-API idiom and no NULL
+            // wallet_balance was found in this repo's other 13 already-
+            // converted files' testing — but this is a real, unverified
+            // edge case, not silently declared safe.
+            const result = await prismaDb.customer.updateMany({
+                where: { id: customerId, is_deleted: false },
+                data: { wallet_balance: { increment: amount }, updated_at: new Date() },
+            });
 
-            if (!result) {
+            if (result.count === 0) {
                 return { status: false, message: "Client non trouvé", code: 404 };
             }
 
-            return { status: true, message: "Solde du portefeuille mis à jour", body: result, code: 200 };
+            const updated = await prismaDb.customer.findUnique({
+                where: { id: customerId },
+                select: { id: true, wallet_balance: true },
+            });
+
+            return { status: true, message: "Solde du portefeuille mis à jour", body: updated, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la mise à jour du solde", code: 500 };
         }
@@ -639,10 +620,10 @@ static async search(filters: {
     // Get wallet balance
     static async getWalletBalance(customerId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
-                `SELECT id, wallet_balance FROM ${kCustomer} WHERE id = $1 AND is_deleted = FALSE`,
-                [customerId]
-            );
+            const result = await prismaDb.customer.findFirst({
+                where: { id: customerId, is_deleted: false },
+                select: { id: true, wallet_balance: true },
+            });
 
             if (!result) {
                 return { status: false, message: "Client non trouvé", code: 404 };

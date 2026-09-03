@@ -5,7 +5,7 @@
 
 export interface VtcDriver {
   id: string;              // UUID
-  userId?: number;         // References user table (still integer)
+  userId?: number;         // References customer(id) — a driver is a customer account with a driver profile attached
   firstName: string;
   lastName: string;
   phone: string;
@@ -23,6 +23,13 @@ export interface VtcDriver {
   vehicleYear?: number;
   vehicleColor?: string;
   licensePlate: string;
+  seats?: number;
+
+  // Documents
+  insuranceNumber?: string;
+  insuranceExpiry?: Date;
+  registrationDocument?: string;
+  vehiclePhotos?: string[];
 
   // Stats
   rating: number;
@@ -54,11 +61,38 @@ export interface CreateDriverDto {
   vehicleYear?: number;
   vehicleColor?: string;
   licensePlate: string;
+  seats?: number;
+  insuranceNumber?: string;
+  insuranceExpiry?: Date;
+  registrationDocument?: string;
+  vehiclePhotos?: string[];
 }
 
 export interface UpdateDriverLocationDto {
   latitude: number;
   longitude: number;
+}
+
+export interface UpdateDriverDto {
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  photo?: string;
+  licenseNumber?: string;
+  licenseExpiry?: Date;
+  vehicleType?: 'economy' | 'comfort' | 'premium';
+  vehicleBrand?: string;
+  vehicleModel?: string;
+  vehicleYear?: number;
+  vehicleColor?: string;
+  licensePlate?: string;
+  seats?: number;
+  insuranceNumber?: string;
+  insuranceExpiry?: Date;
+  registrationDocument?: string;
+  vehiclePhotos?: string[];
+  status?: 'online' | 'offline' | 'busy' | 'suspended';
 }
 
 export interface DriverStatus {

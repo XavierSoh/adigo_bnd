@@ -1,4 +1,6 @@
-import pgpDb from '../../config/pgdb';
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 import { PremiumDesignService } from './premium-design.service';
 import { VisibilityBoostService, BoostDuration } from './visibility-boost.service';
 
@@ -78,7 +80,7 @@ export class PremiumPaymentService {
             };
 
             // 1. MANDATORY DESIGN
-            const event = await pgpDb.one(
+            const event = await pgOne(
                 'SELECT total_tickets FROM event WHERE id = $1',
                 [request.eventId]
             );
@@ -182,7 +184,7 @@ export class PremiumPaymentService {
         serviceSubtype: string
     ): Promise<number> {
         try {
-            const result = await pgpDb.oneOrNone(`
+            const result = await pgOneOrNone(`
                 SELECT base_price
                 FROM event_premium_service_pricing
                 WHERE service_type = $1
@@ -210,7 +212,7 @@ export class PremiumPaymentService {
     ): Promise<{ success: boolean; transactionId?: number; error?: string }> {
         try {
             // Check wallet balance
-            const balance = await pgpDb.oneOrNone(
+            const balance = await pgOneOrNone(
                 'SELECT wallet_balance FROM customer WHERE id = $1',
                 [customerId]
             );
@@ -223,7 +225,7 @@ export class PremiumPaymentService {
             }
 
             // Deduct from wallet
-            await pgpDb.none(`
+            await pgNone(`
                 UPDATE customer
                 SET wallet_balance = wallet_balance - $2,
                     updated_at = CURRENT_TIMESTAMP
@@ -232,7 +234,7 @@ export class PremiumPaymentService {
 
             // Record transaction (if wallet_transaction table exists)
             try {
-                const transaction = await pgpDb.one(`
+                const transaction = await pgOne(`
                     INSERT INTO wallet_transaction (
                         customer_id,
                         transaction_type,
@@ -278,7 +280,7 @@ export class PremiumPaymentService {
     ): Promise<boolean> {
         try {
             // Update event with all premium service details
-            await pgpDb.none(`
+            await pgNone(`
                 UPDATE event
                 SET
                     has_premium_design = TRUE,

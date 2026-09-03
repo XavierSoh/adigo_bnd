@@ -4,7 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const pg_promise_1 = __importDefault(require("pg-promise"));
-const pool = (0, pg_promise_1.default)()({
+const pgpInstance = (0, pg_promise_1.default)();
+const pool = pgpInstance({
     user: process.env.DB_USER || '',
     host: process.env.DB_HOST || '',
     database: process.env.DB_DATABASE || '',

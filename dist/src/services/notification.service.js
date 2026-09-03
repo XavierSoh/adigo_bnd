@@ -1,15 +1,4 @@
 "use strict";
-/**
- * Firebase Cloud Messaging (FCM) Notification Service
- *
- * This service handles push notifications to mobile devices.
- *
- * Setup instructions:
- * 1. Install firebase-admin: npm install firebase-admin
- * 2. Get your Firebase service account key from Firebase Console
- * 3. Save it as 'firebase-service-account.json' in the project root
- * 4. Add FIREBASE_SERVICE_ACCOUNT_PATH to .env file
- */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -17,33 +6,44 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationService = void 0;
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
-// Conditional import - will only work if firebase-admin is installed
 let admin = null;
 let messaging = null;
-try {
-    admin = require('firebase-admin');
-    // Initialize Firebase Admin SDK
-    const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
-        path_1.default.join(__dirname, '../../firebase-service-account.json');
-    if (fs_1.default.existsSync(serviceAccountPath)) {
-        const serviceAccount = require(serviceAccountPath);
-        if (!admin.apps.length) {
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccount)
-            });
+function initializeFirebase() {
+    try {
+        admin = require('firebase-admin');
+        let credential = null;
+        // Method 1: Load from JSON file
+        const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH ||
+            path_1.default.join(__dirname, '../../firebase-service-account.json');
+        if (fs_1.default.existsSync(serviceAccountPath)) {
+            const serviceAccount = require(serviceAccountPath);
+            credential = admin.credential.cert(serviceAccount);
         }
-        messaging = admin.messaging();
-        console.log('✅ Firebase Admin SDK initialized successfully');
+        // Method 2: Load from environment variables
+        else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+            const serviceAccount = {
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+            };
+            credential = admin.credential.cert(serviceAccount);
+        }
+        if (credential && !admin.apps.length) {
+            admin.initializeApp({
+                credential: credential
+            });
+            messaging = admin.messaging();
+            console.log('= Firebase Admin SDK initialized');
+        }
+        else if (!credential) {
+            console.warn('_ Firebase credentials not found. Push notifications disabled.');
+        }
     }
-    else {
-        console.warn('⚠️  Firebase service account file not found. Push notifications disabled.');
-        console.warn(`   Expected path: ${serviceAccountPath}`);
+    catch (error) {
+        console.warn('_ Firebase Admin SDK not installed or error: npm install firebase-admin');
     }
 }
-catch (error) {
-    console.warn('⚠️  Firebase Admin SDK not installed. Push notifications disabled.');
-    console.warn('   Run: npm install firebase-admin');
-}
+initializeFirebase();
 class NotificationService {
     /**
      * Send notification to a single device

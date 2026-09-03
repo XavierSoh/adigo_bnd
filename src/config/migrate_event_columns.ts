@@ -1,4 +1,4 @@
-import pgpDb from "./pgdb";
+import { pgNone } from "../utils/prisma-compat";
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -9,7 +9,7 @@ async function runMigration() {
         const sqlPath = path.join(__dirname, '../migrations/add_missing_event_columns.sql');
         const sql = fs.readFileSync(sqlPath, 'utf8');
 
-        await pgpDb.none(sql);
+        await pgNone(sql);
 
         console.log('Migration completed successfully!');
         process.exit(0);

@@ -1,4 +1,4 @@
-import pgpDb from '../config/pgdb';
+import { pgNone } from '../utils/prisma-compat';
 import fs from 'fs';
 import path from 'path';
 
@@ -10,7 +10,7 @@ async function runCompanySettingsMigration() {
         const migrationSQL = fs.readFileSync(migrationPath, 'utf-8');
 
         console.log('📄 Running migration script...');
-        await pgpDb.none(migrationSQL);
+        await pgNone(migrationSQL);
 
         console.log('✅ Migration completed successfully!');
         console.log('\nChanges applied:');

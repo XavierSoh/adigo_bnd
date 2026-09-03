@@ -1,9 +1,16 @@
 /**
  * Food Order Service
  * Business logic for food order management
+ *
+ * Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+ * shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+ * NOTE: no `restaurants`/`menu_items`/`food_orders`/`food_order_items`
+ * tables exist in the live schema — every call here 500s with "relation
+ * does not exist" regardless of driver, confirmed pre-existing. Not fixed
+ * here — out of scope for a driver swap, see BOOKING_MODULE_NOTES.md.
  */
 
-import pool from '../../config/database';
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgTransaction } from '../../utils/prisma-compat';
 import { FoodOrder, CreateOrderDto, RateOrderDto } from '../../models/food/order.model';
 
 export class OrderService {
@@ -11,22 +18,20 @@ export class OrderService {
    * Create a new food order
    */
   async createOrder(data: CreateOrderDto): Promise<FoodOrder> {
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return await pgTransaction(async (tx) => {
       // Get restaurant info
-      const restaurantQuery = 'SELECT delivery_fee FROM restaurants WHERE id = $1';
-      const restaurantResult = await client.query(restaurantQuery, [data.restaurantId]);
-      const deliveryFee = restaurantResult.rows[0]?.delivery_fee || 0;
+      const restaurant = await pgOneOrNone(
+        'SELECT delivery_fee FROM restaurants WHERE id = $1',
+        [data.restaurantId],
+        tx
+      );
+      const deliveryFee = restaurant?.delivery_fee || 0;
 
       // Calculate subtotal
       let subtotal = 0;
       for (const item of data.items) {
-        const itemQuery = 'SELECT price FROM menu_items WHERE id = $1';
-        const itemResult = await client.query(itemQuery, [item.menuItemId]);
-        const price = itemResult.rows[0]?.price || 0;
+        const menuItem = await pgOneOrNone('SELECT price FROM menu_items WHERE id = $1', [item.menuItemId], tx);
+        const price = menuItem?.price || 0;
         subtotal += price * item.quantity;
       }
 
@@ -53,14 +58,12 @@ export class OrderService {
         data.paymentMethod, 'pending'
       ];
 
-      const orderResult = await client.query(orderQuery, orderValues);
-      const order = orderResult.rows[0];
+      const order = await pgOne(orderQuery, orderValues, tx);
 
       // Create order items
       for (const item of data.items) {
-        const itemQuery = 'SELECT price FROM menu_items WHERE id = $1';
-        const itemResult = await client.query(itemQuery, [item.menuItemId]);
-        const unitPrice = itemResult.rows[0]?.price || 0;
+        const menuItem = await pgOneOrNone('SELECT price FROM menu_items WHERE id = $1', [item.menuItemId], tx);
+        const unitPrice = menuItem?.price || 0;
 
         const itemInsertQuery = `
           INSERT INTO food_order_items (
@@ -68,21 +71,14 @@ export class OrderService {
           ) VALUES ($1, $2, $3, $4, $5, $6)
         `;
 
-        await client.query(itemInsertQuery, [
+        await pgNone(itemInsertQuery, [
           order.id, item.menuItemId, item.quantity,
           unitPrice, unitPrice * item.quantity, item.specialInstructions
-        ]);
+        ], tx);
       }
 
-      await client.query('COMMIT');
       return order;
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      // Connection is managed by pg-promise
-    }
+    });
   }
 
   /**
@@ -90,8 +86,7 @@ export class OrderService {
    */
   async getOrderById(orderId: number): Promise<FoodOrder | null> {
     const query = 'SELECT * FROM food_orders WHERE id = $1';
-    const result = await pool.query(query, [orderId]);
-    return result.rows[0] || null;
+    return await pgOneOrNone(query, [orderId]);
   }
 
   /**
@@ -103,36 +98,33 @@ export class OrderService {
       WHERE customer_id = $1
       ORDER BY created_at DESC
     `;
-    const result = await pool.query(query, [customerId]);
-    return result.rows;
+    return await pgAny(query, [customerId]);
   }
 
   /**
    * Cancel order
    */
-  async cancelOrder(orderId: number): Promise<FoodOrder> {
+  async cancelOrder(orderId: number): Promise<FoodOrder | null> {
     const query = `
       UPDATE food_orders
       SET status = 'cancelled'
       WHERE id = $1
       RETURNING *
     `;
-    const result = await pool.query(query, [orderId]);
-    return result.rows[0];
+    return await pgOneOrNone(query, [orderId]);
   }
 
   /**
    * Rate order
    */
-  async rateOrder(orderId: number, data: RateOrderDto): Promise<FoodOrder> {
+  async rateOrder(orderId: number, data: RateOrderDto): Promise<FoodOrder | null> {
     const query = `
       UPDATE food_orders
       SET rating = $1, review = $2
       WHERE id = $3
       RETURNING *
     `;
-    const result = await pool.query(query, [data.rating, data.review, orderId]);
-    return result.rows[0];
+    return await pgOneOrNone(query, [data.rating, data.review, orderId]);
   }
 }
 

@@ -1,4 +1,4 @@
-import { QRCodeService, QRCodeData } from '../../src/services/qrcode.service';
+import { QRCodeService, QRCodeData } from '../../src/ticketing/services/qrcode.service';
 import QRCode from 'qrcode';
 import fs from 'fs';
 

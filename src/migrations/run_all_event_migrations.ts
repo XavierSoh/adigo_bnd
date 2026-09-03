@@ -1,4 +1,4 @@
-import pgpDb from '../config/pgdb';
+import { pgNone, pgAny, pgOne } from '../utils/prisma-compat';
 import fs from 'fs';
 import path from 'path';
 
@@ -100,7 +100,7 @@ async function runAllEventMigrations() {
                 const sql = fs.readFileSync(sqlPath, 'utf-8');
 
                 // Execute migration
-                await pgpDb.none(sql);
+                await pgNone(sql);
 
                 const executionTime = Date.now() - migrationStartTime;
                 console.log(`   ✅ Completed in ${executionTime}ms`);
@@ -131,7 +131,7 @@ async function runAllEventMigrations() {
 
         // Verify tables exist
         console.log('\n🔍 Verifying Event Tables:');
-        const tables = await pgpDb.any(`
+        const tables = await pgAny(`
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
@@ -146,7 +146,7 @@ async function runAllEventMigrations() {
         console.log('\n📈 Database Statistics:');
 
         try {
-            const categoriesCount = await pgpDb.one(
+            const categoriesCount = await pgOne(
                 'SELECT COUNT(*) as count FROM event_category WHERE is_deleted = FALSE'
             );
             console.log(`   - Event categories: ${categoriesCount.count}`);
@@ -155,7 +155,7 @@ async function runAllEventMigrations() {
         }
 
         try {
-            const pricingCount = await pgpDb.one(
+            const pricingCount = await pgOne(
                 'SELECT COUNT(*) as count FROM event_premium_service_pricing WHERE is_deleted = FALSE'
             );
             console.log(`   - Premium pricing rules: ${pricingCount.count}`);
@@ -164,7 +164,7 @@ async function runAllEventMigrations() {
         }
 
         try {
-            const migrationsApplied = await pgpDb.any(
+            const migrationsApplied = await pgAny(
                 'SELECT migration_name, version, applied_at FROM migration_tracker ORDER BY applied_at'
             );
             console.log(`\n📝 Applied Migrations (${migrationsApplied.length}):`);

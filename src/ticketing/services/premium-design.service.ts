@@ -1,4 +1,6 @@
-import pgpDb from '../../config/pgdb';
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 
 /**
  * Premium Design Service
@@ -32,7 +34,7 @@ export class PremiumDesignService {
     static async calculateDesignPrice(totalTickets: number): Promise<DesignPricing | null> {
         try {
             // Query pricing from database based on capacity
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT
                     service_subtype as tier,
                     base_price as price,
@@ -80,7 +82,7 @@ export class PremiumDesignService {
      */
     static async getAllDesignPricing(): Promise<DesignPricing[]> {
         try {
-            const pricingList = await pgpDb.any(`
+            const pricingList = await pgAny(`
                 SELECT
                     service_subtype as tier,
                     base_price as price,
@@ -118,7 +120,7 @@ export class PremiumDesignService {
      */
     static async markDesignAsPaid(eventId: number, amount: number): Promise<boolean> {
         try {
-            await pgpDb.none(`
+            await pgNone(`
                 UPDATE event
                 SET has_premium_design = TRUE,
                     premium_design_paid = TRUE,
@@ -141,7 +143,7 @@ export class PremiumDesignService {
      */
     static async hasEventPaidForDesign(eventId: number): Promise<boolean> {
         try {
-            const result = await pgpDb.oneOrNone(`
+            const result = await pgOneOrNone(`
                 SELECT premium_design_paid
                 FROM event
                 WHERE id = $1
@@ -166,7 +168,7 @@ export class PremiumDesignService {
         message?: string;
     }> {
         try {
-            const event = await pgpDb.oneOrNone(`
+            const event = await pgOneOrNone(`
                 SELECT
                     total_tickets,
                     premium_design_paid,

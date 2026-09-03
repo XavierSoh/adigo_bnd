@@ -1,15 +1,22 @@
 /**
  * VTC Ride Service
  * Business logic for ride management
+ *
+ * Migrated to Prisma (see VTC_MODULE_PLAN.md) via the pg-promise-shaped
+ * compat shim in prisma-compat.ts — same SQL text and $1,$2,... params as
+ * before, only the call site changed (`pool.one` -> `pgOne`, `pool.tx` ->
+ * `pgTransaction` with the `tx` client passed as each helper's 3rd arg), to
+ * minimize the chance of a transcription mistake on this file.
  */
 
-import pool from '../../config/database';
+import { pgOne, pgAny, pgOneOrNone, pgNone, pgTransaction } from '../../utils/prisma-compat';
 import {
   VtcRide,
   CreateRideDto,
   RideEstimate,
   RateRideDto,
-  CancelRideDto
+  CancelRideDto,
+  RIDE_STATUS_TRANSITIONS
 } from '../../models/vtc/ride.model';
 
 export class RideService {
@@ -115,48 +122,175 @@ export class RideService {
       data.paymentMethod, 'requested'
     ];
 
-    const result = await pool.query(query, values);
-    return result.rows[0];
+    return pgOne(query, values);
   }
 
   /**
-   * Get ride by ID
+   * Get ride by ID, with driver and customer identity joined in — used by
+   * both the customer-facing detail view and the admin ride detail screen.
    */
   async getRideById(rideId: number): Promise<VtcRide | null> {
-    const query = 'SELECT * FROM vtc_rides WHERE id = $1';
-    const result = await pool.query(query, [rideId]);
-    return result.rows[0] || null;
+    return pgOneOrNone(
+      `SELECT r.*,
+              d.first_name AS driver_first_name, d.last_name AS driver_last_name, d.phone AS driver_phone,
+              c.first_name AS customer_first_name, c.last_name AS customer_last_name, c.phone AS customer_phone
+       FROM vtc_rides r
+       LEFT JOIN vtc_drivers d ON d.id = r.driver_id
+       LEFT JOIN customer c ON c.id = r.customer_id
+       WHERE r.id = $1`,
+      [rideId]
+    );
   }
 
   /**
    * Get customer rides
    */
   async getCustomerRides(customerId: number): Promise<VtcRide[]> {
-    const query = `
-      SELECT * FROM vtc_rides
-      WHERE customer_id = $1
-      ORDER BY created_at DESC
-    `;
-    const result = await pool.query(query, [customerId]);
-    return result.rows;
+    return pgAny(
+      `SELECT * FROM vtc_rides
+       WHERE customer_id = $1
+       ORDER BY created_at DESC`,
+      [customerId]
+    );
   }
 
   /**
-   * Cancel a ride
+   * List rides for the admin dashboard — there is no automatic
+   * driver-matching yet, so this is how staff find rides that need a
+   * driver assigned by hand. Joins both the driver AND the customer: the
+   * admin desktop previously showed only the driver's name, leaving staff
+   * with no way to identify who actually booked a ride.
    */
-  async cancelRide(rideId: number, data: CancelRideDto): Promise<VtcRide> {
-    const query = `
-      UPDATE vtc_rides
-      SET status = 'cancelled',
-          cancellation_reason = $1,
-          cancelled_by = $2
-      WHERE id = $3
-      RETURNING *
-    `;
-    const result = await pool.query(query, [
-      data.reason, data.cancelledBy, rideId
-    ]);
-    return result.rows[0];
+  async getAllRides(status?: string, customerId?: number, driverId?: number): Promise<VtcRide[]> {
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (status) {
+      params.push(status);
+      conditions.push(`r.status = $${params.length}`);
+    }
+    if (customerId) {
+      params.push(customerId);
+      conditions.push(`r.customer_id = $${params.length}`);
+    }
+    if (driverId) {
+      params.push(driverId);
+      conditions.push(`r.driver_id = $${params.length}`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = conditions.length ? '' : 'LIMIT 200';
+
+    return pgAny(
+      `SELECT r.*,
+              d.first_name AS driver_first_name, d.last_name AS driver_last_name, d.phone AS driver_phone,
+              c.first_name AS customer_first_name, c.last_name AS customer_last_name, c.phone AS customer_phone
+       FROM vtc_rides r
+       LEFT JOIN vtc_drivers d ON d.id = r.driver_id
+       LEFT JOIN customer c ON c.id = r.customer_id
+       ${where}
+       ORDER BY r.created_at DESC
+       ${limit}`,
+      params
+    );
+  }
+
+  /**
+   * Manually assign a driver to a ride (admin action — no automatic
+   * matching exists). Only succeeds while the ride is still 'requested',
+   * so two staff members racing to assign the same ride can't both win.
+   * Also flips the driver to 'busy' — previously left 'online', which meant
+   * nothing stopped the same driver being assigned to a second ride at the
+   * same time.
+   */
+  async assignDriver(rideId: number, driverId: number): Promise<VtcRide | null> {
+    return pgTransaction(async (tx) => {
+      const ride = await pgOneOrNone(
+        `UPDATE vtc_rides
+         SET driver_id = $1, status = 'accepted'
+         WHERE id = $2 AND status = 'requested'
+         RETURNING *`,
+        [driverId, rideId],
+        tx
+      );
+      if (ride) {
+        await pgNone(`UPDATE vtc_drivers SET status = 'busy' WHERE id = $1`, [driverId], tx);
+      }
+      return ride;
+    });
+  }
+
+  /**
+   * Advance a ride to the next status in its lifecycle (accepted → arrived →
+   * started → completed). Rejects skipped/backwards transitions. Completing
+   * a ride frees the driver back to 'online' — mirrors the 'busy' flip in
+   * assignDriver.
+   */
+  async updateRideStatus(rideId: number, newStatus: string): Promise<VtcRide | null> {
+    return pgTransaction(async (tx) => {
+      const current = await pgOneOrNone<VtcRide & { driver_id: number | null }>(
+        `SELECT status, driver_id FROM vtc_rides WHERE id = $1`,
+        [rideId],
+        tx
+      );
+      if (!current) return null;
+
+      const allowed = RIDE_STATUS_TRANSITIONS[current.status] || [];
+      if (!allowed.includes(newStatus)) {
+        throw new Error(
+          `Transition invalide : ${current.status} → ${newStatus}`
+        );
+      }
+
+      const dropoffClause = newStatus === 'completed' ? `, dropoff_time = CURRENT_TIMESTAMP` : '';
+      const ride = await pgOne(
+        `UPDATE vtc_rides SET status = $1 ${dropoffClause} WHERE id = $2 RETURNING *`,
+        [newStatus, rideId],
+        tx
+      );
+
+      if (newStatus === 'completed' && current.driver_id) {
+        await pgNone(`UPDATE vtc_drivers SET status = 'online' WHERE id = $1`, [current.driver_id], tx);
+      }
+
+      return ride;
+    });
+  }
+
+  /**
+   * Cancel a ride. Also frees the assigned driver back to 'online' — same
+   * reasoning as completing a ride.
+   */
+  async cancelRide(rideId: number, data: CancelRideDto): Promise<VtcRide | null> {
+    return pgTransaction(async (tx) => {
+      const ride = await pgOneOrNone(
+        `UPDATE vtc_rides
+         SET status = 'cancelled',
+             cancellation_reason = $1,
+             cancelled_by = $2
+         WHERE id = $3 AND status != 'cancelled'
+         RETURNING *`,
+        [data.reason, data.cancelledBy, rideId],
+        tx
+      );
+      if (ride && ride.driver_id) {
+        await pgNone(`UPDATE vtc_drivers SET status = 'online' WHERE id = $1`, [ride.driver_id], tx);
+      }
+      return ride;
+    });
+  }
+
+  /**
+   * Mark a ride's payment as completed — called right after a successful
+   * wallet debit in the controller (createRide charges the wallet after the
+   * row already exists, so this is a separate step rather than part of the
+   * INSERT).
+   */
+  async markPaymentCompleted(rideId: number): Promise<VtcRide | null> {
+    return pgOneOrNone(
+      `UPDATE vtc_rides SET payment_status = 'completed' WHERE id = $1 RETURNING *`,
+      [rideId]
+    );
   }
 
   /**
@@ -166,23 +300,19 @@ export class RideService {
     rideId: number,
     ratedBy: 'customer' | 'driver',
     data: RateRideDto
-  ): Promise<VtcRide> {
+  ): Promise<VtcRide | null> {
     const field = ratedBy === 'customer' ? 'driver_rating' : 'customer_rating';
     const feedbackField = ratedBy === 'customer'
       ? 'driver_feedback'
       : 'customer_feedback';
 
-    const query = `
-      UPDATE vtc_rides
-      SET ${field} = $1, ${feedbackField} = $2
-      WHERE id = $3
-      RETURNING *
-    `;
-
-    const result = await pool.query(query, [
-      data.rating, data.feedback, rideId
-    ]);
-    return result.rows[0];
+    return pgOneOrNone(
+      `UPDATE vtc_rides
+       SET ${field} = $1, ${feedbackField} = $2
+       WHERE id = $3
+       RETURNING *`,
+      [data.rating, data.feedback, rideId]
+    );
   }
 }
 

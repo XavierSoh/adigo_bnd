@@ -1,4 +1,4 @@
-import pgpDb from '../config/pgdb';
+import { pgOneOrNone, pgAny, pgOne } from '../utils/prisma-compat';
 import runAllEventMigrations from './run_all_event_migrations';
 
 /**
@@ -61,7 +61,7 @@ async function testMigrations() {
 
     // Test 1: Migration Tracker Table
     await runTest('Migration Tracker Table Exists', async () => {
-        const exists = await pgpDb.oneOrNone(`
+        const exists = await pgOneOrNone(`
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_name = 'migration_tracker'
@@ -90,7 +90,7 @@ async function testMigrations() {
             'event_premium_service_pricing'
         ];
 
-        const tables = await pgpDb.any(`
+        const tables = await pgAny(`
             SELECT table_name
             FROM information_schema.tables
             WHERE table_name LIKE 'event%'
@@ -115,7 +115,7 @@ async function testMigrations() {
 
     // Test 3: Event Categories Seeded
     await runTest('Event Categories Seeded', async () => {
-        const count = await pgpDb.one(`
+        const count = await pgOne(`
             SELECT COUNT(*) as count FROM event_category
             WHERE is_deleted = FALSE
         `);
@@ -131,12 +131,12 @@ async function testMigrations() {
 
     // Test 4: Premium Pricing Seeded
     await runTest('Premium Pricing Rules Seeded', async () => {
-        const count = await pgpDb.one(`
+        const count = await pgOne(`
             SELECT COUNT(*) as count FROM event_premium_service_pricing
             WHERE is_deleted = FALSE
         `);
 
-        const breakdown = await pgpDb.any(`
+        const breakdown = await pgAny(`
             SELECT service_type, COUNT(*) as count
             FROM event_premium_service_pricing
             WHERE is_deleted = FALSE
@@ -169,7 +169,7 @@ async function testMigrations() {
         let allPassed = true;
 
         for (const testCase of testCases) {
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT service_subtype, base_price
                 FROM event_premium_service_pricing
                 WHERE service_type = 'design'
@@ -222,7 +222,7 @@ async function testMigrations() {
         const results = [];
 
         for (const boost of boostTypes) {
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT base_price
                 FROM event_premium_service_pricing
                 WHERE service_type = $1
@@ -265,7 +265,7 @@ async function testMigrations() {
             'record_migration'
         ];
 
-        const functions = await pgpDb.any(`
+        const functions = await pgAny(`
             SELECT routine_name
             FROM information_schema.routines
             WHERE routine_type = 'FUNCTION'
@@ -307,7 +307,7 @@ async function testMigrations() {
             'field_service_scanner_amount'
         ];
 
-        const columns = await pgpDb.any(`
+        const columns = await pgAny(`
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = 'event'
@@ -338,7 +338,7 @@ async function testMigrations() {
             'seller_receives'
         ];
 
-        const columns = await pgpDb.any(`
+        const columns = await pgAny(`
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = 'event_ticket_resale'
@@ -361,7 +361,7 @@ async function testMigrations() {
 
     // Test 10: Migrations Recorded
     await runTest('Migrations Recorded in Tracker', async () => {
-        const migrations = await pgpDb.any(`
+        const migrations = await pgAny(`
             SELECT migration_name, version, status, applied_at
             FROM migration_tracker
             ORDER BY applied_at DESC

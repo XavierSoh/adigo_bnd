@@ -1,19 +1,21 @@
-import pgpDb from "../../config/pgdb";
+// Migrated to Prisma's native model API (prisma.event_favorite.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration").
+import { Prisma } from "@prisma/client";
+import prismaDb from "../../config/prismaClient";
 import ResponseModel from "../../models/response.model";
-import { kEventFavorite, kEvent, kEventCategory } from "../../utils/table_names";
 
 export class FavoriteRepository {
 
     static async findByCustomerId(customerId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.any(
-                `SELECT f.*, row_to_json(e) as event
-                 FROM ${kEventFavorite} f
-                 LEFT JOIN ${kEvent} e ON f.event_id = e.id
-                 WHERE f.customer_id = $1
-                 ORDER BY f.created_at DESC`,
-                [customerId]
-            );
+            // `row_to_json(e) as event` in the original == exactly what
+            // `include: { event: true }` produces here (the full nested
+            // event row under an `event` key) — a clean 1:1 conversion.
+            const result = await prismaDb.event_favorite.findMany({
+                where: { customer_id: customerId },
+                include: { event: true },
+                orderBy: { created_at: 'desc' },
+            });
             return { status: true, message: "Favoris récupérés", body: result, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la récupération", code: 500 };
@@ -21,22 +23,25 @@ export class FavoriteRepository {
     }
 
     static async isFavorite(customerId: number, eventId: number): Promise<boolean> {
-        const result = await pgpDb.oneOrNone(
-            `SELECT 1 FROM ${kEventFavorite} WHERE customer_id = $1 AND event_id = $2`,
-            [customerId, eventId]
-        );
+        const result = await prismaDb.event_favorite.findUnique({
+            where: { customer_id_event_id: { customer_id: customerId, event_id: eventId } },
+        });
         return !!result;
     }
 
     static async add(customerId: number, eventId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
-                `INSERT INTO ${kEventFavorite} (customer_id, event_id)
-                 VALUES ($1, $2)
-                 ON CONFLICT (customer_id, event_id) DO NOTHING
-                 RETURNING *`,
-                [customerId, eventId]
-            );
+            // BEHAVIOR PRESERVED, not accidentally fixed: the original used
+            // `pgOne` (not `pgOneOrNone`) on an `ON CONFLICT DO NOTHING
+            // RETURNING *` insert — on a duplicate favorite, that insert
+            // returns 0 rows and `pgOne` *throws* (it requires exactly 1),
+            // landing in the catch block below as a generic 500, not a
+            // clean 409/idempotent no-op. Plain `.create()` (no
+            // upsert/skipDuplicates) reproduces exactly that: it throws
+            // P2002 on the same duplicate, caught the same way.
+            const result = await prismaDb.event_favorite.create({
+                data: { customer_id: customerId, event_id: eventId },
+            });
             return { status: true, message: "Ajouté aux favoris", body: result, code: 201 };
         } catch (error) {
             return { status: false, message: "Erreur lors de l'ajout", code: 500 };
@@ -45,11 +50,10 @@ export class FavoriteRepository {
 
     static async remove(customerId: number, eventId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
-                `DELETE FROM ${kEventFavorite} WHERE customer_id = $1 AND event_id = $2`,
-                [customerId, eventId]
-            );
-            if (result.rowCount === 0) {
+            const result = await prismaDb.event_favorite.deleteMany({
+                where: { customer_id: customerId, event_id: eventId },
+            });
+            if (result.count === 0) {
                 return { status: false, message: "Favori non trouvé", code: 404 };
             }
             return { status: true, message: "Retiré des favoris", code: 200 };

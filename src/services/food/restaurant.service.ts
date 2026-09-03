@@ -1,9 +1,17 @@
 /**
  * Restaurant Service
  * Business logic for restaurant management
+ *
+ * Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+ * shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+ * NOTE: no `restaurants`/`menu_items` tables exist in the live schema —
+ * every call here 500s with "relation does not exist" regardless of driver,
+ * confirmed pre-existing (this whole food module was never actually built
+ * against a real schema). Not fixed here — out of scope for a driver swap,
+ * see BOOKING_MODULE_NOTES.md.
  */
 
-import pool from '../../config/database';
+import { pgAny, pgOneOrNone } from '../../utils/prisma-compat';
 import { Restaurant, RestaurantFilters, RestaurantWithDistance } from '../../models/food/restaurant.model';
 
 export class RestaurantService {
@@ -54,8 +62,7 @@ export class RestaurantService {
 
     query += ` ORDER BY ${filters.latitude ? 'distance ASC' : 'rating DESC'}`;
 
-    const result = await pool.query(query, params);
-    return result.rows;
+    return await pgAny(query, params);
   }
 
   /**
@@ -63,8 +70,7 @@ export class RestaurantService {
    */
   async getRestaurantById(id: number): Promise<Restaurant | null> {
     const query = 'SELECT * FROM restaurants WHERE id = $1';
-    const result = await pool.query(query, [id]);
-    return result.rows[0] || null;
+    return await pgOneOrNone(query, [id]);
   }
 }
 

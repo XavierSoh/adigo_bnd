@@ -1,4 +1,4 @@
-import { PremiumDesignService } from '../../src/services/premium-design.service';
+import { PremiumDesignService } from '../../src/ticketing/services/premium-design.service';
 import pgpDb from '../../src/config/pgdb';
 
 jest.mock('../../src/config/pgdb');

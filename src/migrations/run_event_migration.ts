@@ -1,4 +1,4 @@
-import pgpDb from '../config/pgdb';
+import { pgNone, pgAny, pgOne } from '../utils/prisma-compat';
 import fs from 'fs';
 import path from 'path';
 
@@ -20,7 +20,7 @@ async function runEventMigration() {
             'utf-8'
         );
 
-        await pgpDb.none(createTablesSql);
+        await pgNone(createTablesSql);
         console.log('✅ Event tables created successfully\n');
 
         // Step 2: Seed Categories
@@ -30,12 +30,12 @@ async function runEventMigration() {
             'utf-8'
         );
 
-        await pgpDb.none(seedCategoriesSql);
+        await pgNone(seedCategoriesSql);
         console.log('✅ Event categories seeded successfully\n');
 
         // Step 3: Verify tables exist
         console.log('🔍 Step 3: Verifying tables...');
-        const tables = await pgpDb.any(`
+        const tables = await pgAny(`
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
@@ -50,17 +50,17 @@ async function runEventMigration() {
         // Step 4: Get statistics
         console.log('📊 Step 4: Migration statistics:');
 
-        const categoriesCount = await pgpDb.one(
+        const categoriesCount = await pgOne(
             'SELECT COUNT(*) as count FROM event_category'
         );
         console.log(`   - Event categories: ${categoriesCount.count}`);
 
-        const organizersCount = await pgpDb.one(
+        const organizersCount = await pgOne(
             'SELECT COUNT(*) as count FROM event_organizer'
         );
         console.log(`   - Event organizers: ${organizersCount.count}`);
 
-        const eventsCount = await pgpDb.one(
+        const eventsCount = await pgOne(
             'SELECT COUNT(*) as count FROM event'
         );
         console.log(`   - Events: ${eventsCount.count}`);

@@ -2,7 +2,7 @@
 import { Request, Response } from 'express'; 
 const generationService = new TripGenerationService();
 import * as tbl from "../utils/table_names";
-import pgpDb from '../config/pgdb';
+import { pgAny } from '../utils/prisma-compat';
 import { TripGenerationService } from '../services/tripGeneration.service';
 
 
@@ -49,7 +49,7 @@ export const tripGenerationController = {
         try {
             const { startDate, endDate } = req.query;
             
-            const trips = await pgpDb.any(`
+            const trips = await pgAny(`
                 SELECT gt.*, t.departure_city, t.arrival_city, t.price,
                        b.registration_number, b.capacity,
                        CONCAT(s.first_name, ' ', s.last_name) as driver_name

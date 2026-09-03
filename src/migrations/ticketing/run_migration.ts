@@ -1,4 +1,4 @@
-import pgpDb from "../../config/pgdb";
+import { pgNone, pgAny, pgOne } from "../../utils/prisma-compat";
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -17,7 +17,7 @@ async function runMigration() {
 
         try {
             const sql = fs.readFileSync(filePath, 'utf8');
-            await pgpDb.none(sql);
+            await pgNone(sql);
             console.log(`   ✅ Success\n`);
         } catch (error: any) {
             console.error(`   ❌ Error: ${error.message}\n`);
@@ -26,13 +26,13 @@ async function runMigration() {
 
     // Verify tables
     console.log('🔍 Verifying tables...');
-    const tables = await pgpDb.any(
+    const tables = await pgAny(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'event%' ORDER BY table_name"
     );
     console.log('   Tables created:', tables.map((t: any) => t.table_name).join(', '));
 
     // Verify categories
-    const categories = await pgpDb.one('SELECT COUNT(*) as count FROM event_category');
+    const categories = await pgOne('SELECT COUNT(*) as count FROM event_category');
     console.log(`   Categories seeded: ${categories.count}`);
 
     console.log('\n✅ Migration completed!');

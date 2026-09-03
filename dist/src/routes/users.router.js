@@ -4,12 +4,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const user_controller_1 = require("../controllers/user.controller");
 const staff_controller_1 = require("../controllers/staff.controller");
+const auth_middleware_1 = require("../middleware/auth.middleware");
 const usersRouter = (0, express_1.Router)();
-// Authentification
+// _ Public routes (no auth required)
 usersRouter.post("/create", user_controller_1.UserController.register);
 usersRouter.post("/login", user_controller_1.UserController.login);
+// _ Protected routes (JWT required)
+usersRouter.use(auth_middleware_1.authMiddleware);
 usersRouter.get('/unassociated', staff_controller_1.StaffController.getStaffWithoutUser);
-// Gestion des utilisateurs
 usersRouter.get("/:id", user_controller_1.UserController.getUserById);
 usersRouter.get("/", user_controller_1.UserController.getAllUsers);
 usersRouter.put("/:id", user_controller_1.UserController.updateUser);

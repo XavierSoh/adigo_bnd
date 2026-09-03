@@ -1,7 +1,7 @@
 // tripScheduler.service.ts
 import cron from 'node-cron';
 import { TripGenerationService } from './tripGeneration.service';
-import pgpDb from '../config/pgdb';
+import { pgNone } from '../utils/prisma-compat';
 import * as tbl from "../utils/table_names";
 
 export class TripSchedulerService {
@@ -44,7 +44,7 @@ export class TripSchedulerService {
 
         const oneWeekAgo = new Date();
         oneWeekAgo.setDate(oneWeekAgo.getDate() - 7); 
-        await pgpDb.none(`
+        await pgNone(`
             DELETE FROM ${tbl.kGeneratedTrip} 
             WHERE actual_departure_time < $1
             AND status IN ('completed', 'cancelled')

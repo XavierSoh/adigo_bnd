@@ -5,7 +5,7 @@
 
 import { Request, Response } from 'express';
 import shipmentService from '../../services/parcel/shipment.service';
-import pool from '../../config/database';
+import { pgAny } from '../../utils/prisma-compat';
 import { CreateShipmentDto, EstimateShipmentDto } from '../../models/parcel/shipment.model';
 
 export class ShipmentController {
@@ -104,13 +104,13 @@ export class ShipmentController {
         WHERE shipment_id = $1
         ORDER BY created_at DESC
       `;
-      const eventsResult = await pool.query(eventsQuery, [shipment.id]);
+      const events = await pgAny(eventsQuery, [shipment.id]);
 
       return res.json({
         success: true,
         data: {
           shipment,
-          events: eventsResult.rows
+          events
         }
       });
     } catch (error: any) {

@@ -5,14 +5,105 @@ import { WalletRepository } from "../repository/wallet.repository";
 import { Booking } from "../models/booking.model";
 import { I18n } from "../utils/i18n";
 import { calculateTierDiscount } from "../config/tier.config";
-import pgpDb from "../config/pgdb";
+import { pgOneOrNone, pgAny, pgNone } from "../utils/prisma-compat";
 import { SocketService } from "../services/socket.service";
+import { PaymentService } from "../services/payment/payment.service";
 
 export class BookingController {
+    /**
+     * Creates a booking in 'pending' status and initiates a real Orange
+     * Money payment for it — the booking only becomes 'confirmed' once the
+     * customer approves the charge on their own phone (see
+     * settlement-handlers/booking.settlement.ts).
+     *
+     * This is a new, separate entry point from create(): it does not change
+     * the existing behavior of POST /booking, which still lets a caller
+     * mark any booking 'confirmed' immediately regardless of payment_method
+     * (a known, still-open gap for that endpoint specifically — see the
+     * production audit). Mobile needs to be updated to call this instead
+     * for Orange Money bookings before that gap is closed there too.
+     */
+    static async initiateOrangeMoneyPayment(req: Request, res: Response): Promise<void> {
+        try {
+            if (!req.userId) {
+                res.status(401).json({ status: false, message: "Unauthorized", code: 401 });
+                return;
+            }
+
+            const { generated_trip_id, generated_trip_seat_id, total_price, subscriber_msisdn } = req.body;
+
+            if (!generated_trip_id || !generated_trip_seat_id || !total_price || !subscriber_msisdn) {
+                res.status(400).json({
+                    status: false,
+                    message: "generated_trip_id, generated_trip_seat_id, total_price et subscriber_msisdn sont requis",
+                    code: 400
+                });
+                return;
+            }
+
+            const availabilityCheck = await BookingRepository.checkSeatAvailability(
+                generated_trip_id,
+                generated_trip_seat_id
+            );
+            if (availabilityCheck.body && !(availabilityCheck.body as any).available) {
+                res.status(409).json({
+                    status: false,
+                    message: "Ce siège est déjà réservé pour ce voyage",
+                    code: 409
+                });
+                return;
+            }
+
+            const createResult = await BookingRepository.create({
+                generated_trip_id,
+                customer_id: req.userId,
+                generated_trip_seat_id,
+                total_price,
+                payment_method: "orangeMoney",
+                status: "pending",
+                booking_date: new Date().toISOString(),
+            } as unknown as Booking);
+
+            if (!createResult.status) {
+                res.status(createResult.code).json(createResult);
+                return;
+            }
+
+            const booking = createResult.body as any;
+
+            const paymentResult = await PaymentService.initiate({
+                customerId: req.userId,
+                purpose: "booking",
+                purposeRefId: booking.id,
+                subscriberMsisdn: subscriber_msisdn,
+                amount: total_price,
+                description: `Réservation ${booking.booking_reference || booking.id}`.slice(0, 100),
+            });
+
+            if (!paymentResult.status) {
+                await BookingRepository.update(booking.id, {
+                    status: "cancelled",
+                    cancellation_reason: paymentResult.message,
+                } as Partial<Booking>);
+                res.status(paymentResult.code).json(paymentResult);
+                return;
+            }
+
+            res.status(200).json({
+                status: true,
+                message: paymentResult.message,
+                body: { booking, payment: paymentResult.body },
+                code: 200
+            });
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+        }
+    }
+
     // Réservation multiple avec infos passager
     static async createMultiple(req: Request, res: Response): Promise<void> {
         try {
-            const { generated_trip_id, customer_id, seats, payment_method, created_by } = req.body;
+            const { generated_trip_id, customer_id, seats, payment_method, created_by, subscriber_msisdn } = req.body;
 
             console.log(`🎫 [BookingController] Creating multiple bookings for customer ${customer_id}, trip ${generated_trip_id}, ${seats?.length} seats`);
 
@@ -20,6 +111,30 @@ export class BookingController {
                 res.status(400).json({
                     status: false,
                     message: I18n.t('required_fields', req.lang),
+                    code: 400
+                });
+                return;
+            }
+
+            // A customer token (no role on it — see customer JWT payload)
+            // can only book for itself; a staff token may book for any
+            // customer (counter booking on the dashboard).
+            if (!req.userRole && req.userId !== Number(customer_id)) {
+                res.status(403).json({
+                    status: false,
+                    message: "Vous ne pouvez réserver que pour votre propre compte",
+                    code: 403
+                });
+                return;
+            }
+
+            // MTN Mobile Money isn't wired to a real payment provider on
+            // either side (mobile or backend) — refusing it here is safer
+            // than silently confirming a real seat for an unpaid booking.
+            if (payment_method === 'mtn') {
+                res.status(400).json({
+                    status: false,
+                    message: "MTN Mobile Money n'est pas encore disponible. Choisissez Orange Money, le portefeuille Adigo, ou le paiement en espèces.",
                     code: 400
                 });
                 return;
@@ -40,8 +155,22 @@ export class BookingController {
             }
             const customerTier = (customerData.body as any).customer_tier || 'regular';
 
+            // Orange Money needs a number to charge. The mobile app always
+            // sends the customer's own number; the dashboard's counter-
+            // booking form doesn't collect one yet, so fall back to
+            // whatever the customer already has saved on their profile.
+            const orangeMoneyMsisdn = subscriber_msisdn || (customerData.body as any).default_orange_money_number;
+            if (payment_method === 'orangeMoney' && !orangeMoneyMsisdn) {
+                res.status(400).json({
+                    status: false,
+                    message: "Le numéro Orange Money du client est requis (aucun numéro enregistré sur son profil)",
+                    code: 400
+                });
+                return;
+            }
+
             // Fetch trip price from database (source of truth)
-            const tripPriceQuery = await pgpDb.oneOrNone(
+            const tripPriceQuery = await pgOneOrNone(
                 `SELECT t.price
                  FROM trip t
                  JOIN generated_trip gt ON gt.trip_id = t.id
@@ -112,7 +241,12 @@ export class BookingController {
                 const discount = calculateTierDiscount(baseTripPrice, customerTier);
                 const finalPrice = baseTripPrice - discount;
 
-                // Créer la réservation avec tous les champs requis
+                // Créer la réservation avec tous les champs requis.
+                // Orange Money bookings start 'pending' — they only become
+                // 'confirmed' once the settlement handler runs after the
+                // customer approves the charge on their phone (see below
+                // and settlement-handlers/booking.settlement.ts). Wallet is
+                // already verified/deducted above; cash is pay-on-boarding.
                 const now = new Date().toISOString();
                 const booking: Booking = {
                     id: 0, // sera ignoré par la DB
@@ -121,7 +255,7 @@ export class BookingController {
                     created_by: created_by || customer_id, // Utiliser customer_id si created_by n'est pas fourni
                     generated_trip_seat_id: seat.generated_trip_seat_id,
                     booking_date: now,
-                    status: "confirmed",
+                    status: payment_method === 'orangeMoney' ? 'pending' : 'confirmed',
                     payment_method,
                     is_deleted: false,
                     total_price: finalPrice,
@@ -171,6 +305,34 @@ export class BookingController {
                 }
             }
 
+            // Orange Money: bookings above were created 'pending'. Kick off
+            // the real charge now — the customer still has to approve it on
+            // their phone. Settlement (booking.settlement.ts) confirms every
+            // booking in this group once Orange Money verifies the payment;
+            // if we can't even start the charge, release the seats instead
+            // of leaving them stuck 'pending' forever.
+            let paymentInfo: any = undefined;
+            if (payment_method === 'orangeMoney' && totalPrice > 0) {
+                const paymentResult = await PaymentService.initiate({
+                    customerId: customer_id,
+                    purpose: 'booking',
+                    purposeRefId: bookings[0].id,
+                    subscriberMsisdn: orangeMoneyMsisdn,
+                    amount: totalPrice,
+                    description: `Réservation ${group_id} (${bookings.length} place${bookings.length > 1 ? 's' : ''})`.slice(0, 100),
+                });
+
+                if (!paymentResult.status) {
+                    await BookingRepository.cancelBatch(
+                        bookings.map(b => b.id),
+                        paymentResult.message || 'Échec initiation paiement Orange Money'
+                    );
+                    res.status(paymentResult.code).json(paymentResult);
+                    return;
+                }
+                paymentInfo = paymentResult.body;
+            }
+
             // Fetch complete booking details with all related data
             const detailedBookings = await BookingRepository.findByGroupId(group_id);
 
@@ -190,10 +352,13 @@ export class BookingController {
 
             res.status(201).json({
                 status: true,
-                message: I18n.t('bookings_created', req.lang),
+                message: paymentInfo
+                    ? "Réservation en attente — confirmez le paiement sur votre téléphone"
+                    : I18n.t('bookings_created', req.lang),
                 bookings: detailedBookings.status ? detailedBookings.body : bookings,
                 total_price: totalPrice,
                 group_id: group_id,
+                payment: paymentInfo,
                 code: 201
             });
         } catch (error) {
@@ -211,6 +376,15 @@ export class BookingController {
                     status: false,
                     message: "generated_trip_id, customer_id et generated_trip_seat_id sont requis",
                     code: 400
+                });
+                return;
+            }
+
+            if (!req.userRole && req.userId !== Number(booking.customer_id)) {
+                res.status(403).json({
+                    status: false,
+                    message: "Vous ne pouvez réserver que pour votre propre compte",
+                    code: 403
                 });
                 return;
             }
@@ -246,7 +420,35 @@ export class BookingController {
                 console.log(`💎 Tier discount applied for ${customerTier}: -${discount} XAF (${booking.total_price + discount} → ${booking.total_price})`);
             }
 
-            // Create the booking first
+            // Wallet balance is checked BEFORE creating anything — same
+            // pre-check shape as createMultiple below. Was: create the
+            // booking, then try to charge the wallet, and if that failed
+            // just log a warning and return the booking as successfully
+            // created (code 201) anyway — a booking could end up confirmed
+            // with the wallet never actually charged, silently, with no
+            // error reaching the client at all.
+            if (booking.payment_method === 'wallet' && booking.total_price > 0) {
+                const balanceCheck = await CustomerRepository.getWalletBalance(booking.customer_id);
+                if (!balanceCheck.status) {
+                    res.status(balanceCheck.code).json(balanceCheck);
+                    return;
+                }
+                const currentBalance = (balanceCheck.body as any).balance || 0;
+
+                if (currentBalance < booking.total_price) {
+                    res.status(400).json({
+                        status: false,
+                        message: I18n.t('insufficient_wallet_balance', req.lang, {
+                            current: currentBalance.toString(),
+                            required: booking.total_price.toString()
+                        }),
+                        code: 400
+                    });
+                    return;
+                }
+            }
+
+            // Create the booking
             const result = await BookingRepository.create(booking);
 
             if (!result.status) {
@@ -254,7 +456,8 @@ export class BookingController {
                 return;
             }
 
-            // If payment method is wallet, record the payment transaction
+            // Record the wallet payment transaction (balance already
+            // verified sufficient above).
             if (booking.payment_method === 'wallet' && booking.total_price > 0) {
                 const createdBooking = result.body as Booking;
                 const paymentResult = await WalletRepository.recordPayment(
@@ -264,9 +467,20 @@ export class BookingController {
                 );
 
                 if (!paymentResult.status) {
-                    // Payment recording failed, but booking was created
-                    // This is not ideal, but we return the booking anyway
-                    console.error('⚠️ Warning: Booking created but wallet transaction failed:', paymentResult.message);
+                    // Balance was fine moments ago but the debit itself
+                    // failed (race with another concurrent charge, DB
+                    // error...) — undo the booking rather than leave it
+                    // confirmed unpaid.
+                    await BookingRepository.softDelete(createdBooking.id, booking.created_by);
+                    res.status(400).json({
+                        status: false,
+                        message: paymentResult.message || I18n.t('insufficient_wallet_balance', req.lang, {
+                            current: '?',
+                            required: booking.total_price.toString()
+                        }),
+                        code: 400
+                    });
+                    return;
                 }
             }
 
@@ -387,6 +601,71 @@ export class BookingController {
                         code: 409
                     });
                     return;
+                }
+            }
+
+            // Fetched once, used by both wallet checks below (payment-method
+            // change and cancellation refund), and only when either could
+            // actually matter — no need to hit the DB for a status-only
+            // edit that leaves both alone.
+            let existingBooking: Booking | null = null;
+            if (booking.payment_method === 'wallet' || booking.status === 'cancelled') {
+                const existing = await BookingRepository.findById(id);
+                if (!existing.status) {
+                    res.status(existing.code).json(existing);
+                    return;
+                }
+                existingBooking = existing.body as Booking;
+            }
+
+            // Only `create`/`createMultiple` deducted the wallet — editing an
+            // existing booking (e.g. staff correcting its payment method to
+            // "wallet" after the fact) silently left the balance untouched.
+            // Deduct here too, but only on the actual cash→wallet /
+            // orangeMoney→wallet transition, and before applying the
+            // update, so an insufficient balance blocks the save instead of
+            // leaving a booking marked "wallet" that was never charged.
+            if (booking.payment_method === 'wallet' && existingBooking) {
+                if (existingBooking.payment_method !== 'wallet' && existingBooking.total_price > 0) {
+                    const paymentResult = await WalletRepository.recordPayment(
+                        existingBooking.customer_id,
+                        existingBooking.total_price,
+                        `Booking payment - ${existingBooking.booking_reference || 'Ref: ' + existingBooking.id}`
+                    );
+
+                    if (!paymentResult.status) {
+                        res.status(400).json({
+                            status: false,
+                            message: paymentResult.message || "Solde du portefeuille insuffisant",
+                            code: 400
+                        });
+                        return;
+                    }
+                }
+            }
+
+            // Refund back to the customer's wallet when a booking actually
+            // transitions to cancelled (not already cancelled — re-saving
+            // an already-cancelled booking must not refund it a second
+            // time) — regardless of how it was originally paid. The wallet
+            // is the one place we can hand money back through the app: for
+            // cash and Orange Money/MTN there's no automated reversal, so
+            // crediting the wallet (which the client can spend on a future
+            // booking) is how a refund actually reaches them.
+            if (
+                booking.status === 'cancelled' &&
+                existingBooking &&
+                existingBooking.status !== 'cancelled' &&
+                existingBooking.total_price > 0
+            ) {
+                const refundResult = await WalletRepository.recordRefund(
+                    existingBooking.customer_id,
+                    existingBooking.total_price,
+                    `Booking cancellation refund (paid via ${existingBooking.payment_method}) - ${existingBooking.booking_reference || 'Ref: ' + existingBooking.id}`
+                );
+
+                if (!refundResult.status) {
+                    console.error('⚠️ Warning: Booking cancelled but wallet refund failed:', refundResult.message);
                 }
             }
 
@@ -800,6 +1079,11 @@ export class BookingController {
                 return;
             }
 
+            if (!req.userRole && req.userId !== Number(customer_id)) {
+                res.status(403).json({ status: false, message: I18n.t('unauthorized', req.lang), code: 403 });
+                return;
+            }
+
             // Get booking details
             const bookingResult = await BookingRepository.findById(parseInt(booking_id));
             if (!bookingResult.status || !bookingResult.body) {
@@ -838,7 +1122,7 @@ export class BookingController {
             let bookingIds = [parseInt(booking_id)];
             if (booking.group_id) {
                 console.log(`📦 [BookingController] Cancelling group: ${booking.group_id}`);
-                const groupBookingsResult = await pgpDb.manyOrNone(
+                const groupBookingsResult = await pgAny(
                     `SELECT id, status FROM booking WHERE group_id = $1 AND is_deleted = false`,
                     [booking.group_id]
                 );
@@ -890,6 +1174,11 @@ export class BookingController {
                 return;
             }
 
+            if (!req.userRole && req.userId !== Number(customer_id)) {
+                res.status(403).json({ status: false, message: I18n.t('unauthorized', req.lang), code: 403 });
+                return;
+            }
+
             // Get booking details
             const bookingResult = await BookingRepository.findById(parseInt(booking_id));
             if (!bookingResult.status || !bookingResult.body) {
@@ -924,7 +1213,7 @@ export class BookingController {
             }
 
             // Check if departure time is at least 2 hours in the future
-            const departureTimeResult = await pgpDb.oneOrNone(
+            const departureTimeResult = await pgOneOrNone(
                 `SELECT actual_departure_time
                  FROM generated_trip
                  WHERE id = $1`,
@@ -947,7 +1236,7 @@ export class BookingController {
             }
 
             // Check if new seat is available
-            const seatCheck = await pgpDb.oneOrNone(
+            const seatCheck = await pgOneOrNone(
                 `SELECT id, status
                  FROM generated_trip_seat
                  WHERE id = $1 AND generated_trip_id = $2`,
@@ -973,7 +1262,7 @@ export class BookingController {
             }
 
             // Update booking with new seat
-            await pgpDb.none(
+            await pgNone(
                 `UPDATE booking
                  SET generated_trip_seat_id = $1,
                      updated_at = NOW()
@@ -982,7 +1271,7 @@ export class BookingController {
             );
 
             // Mark old seat as available
-            await pgpDb.none(
+            await pgNone(
                 `UPDATE generated_trip_seat
                  SET status = 'available'
                  WHERE id = $1`,
@@ -990,7 +1279,7 @@ export class BookingController {
             );
 
             // Mark new seat as reserved
-            await pgpDb.none(
+            await pgNone(
                 `UPDATE generated_trip_seat
                  SET status = 'reserved'
                  WHERE id = $1`,

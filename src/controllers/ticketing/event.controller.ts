@@ -1,101 +1,121 @@
 import { Request, Response } from "express";
-import { EventRepository, TicketTypeRepository } from "../../repository/ticketing";
+import { EventRepository } from "../../repository/ticketing/event.repository";
+import { TicketTypeRepository } from "../../repository/ticketing/ticket-type.repository";
 import { EventSearchParams } from "../../models/ticketing";
 
 export class EventController {
 
     static async getAll(req: Request, res: Response) {
-        const limit = parseInt(req.query.limit as string) || 50;
-        const offset = parseInt(req.query.offset as string) || 0;
-        const result = await EventRepository.findAll(limit, offset);
-        res.status(result.code).json(result);
-    }
-
-    static async getById(req: Request, res: Response) {
-        const id = parseInt((req.params as { id: string }).id);
-        await EventRepository.incrementViews(id);
-        const result = await EventRepository.findById(id);
-        res.status(result.code).json(result);
-    }
-
-    static async getByCode(req: Request, res: Response) {
-        const code = (req.params as { code: string }).code;
-        const result = await EventRepository.findByCode(code);
-        res.status(result.code).json(result);
+        const { limit, offset } = req.query as { limit?: string; offset?: string };
+        const response = await EventRepository.findAll(
+            limit ? parseInt(limit) : undefined,
+            offset ? parseInt(offset) : undefined
+        );
+        res.status(response.code).json(response);
     }
 
     static async search(req: Request, res: Response) {
+        const {
+            search, category_id, city, status, organizer_id,
+            is_featured, start_date, end_date, limit, offset
+        } = req.query as Record<string, string | undefined>;
+
         const params: EventSearchParams = {
-            search: req.query.search as string,
-            category_id: req.query.category_id ? parseInt(req.query.category_id as string) : undefined,
-            city: req.query.city as string,
-            status: req.query.status as any,
-            organizer_id: req.query.organizer_id ? parseInt(req.query.organizer_id as string) : undefined,
-            is_featured: req.query.featured === 'true',
-            limit: parseInt(req.query.limit as string) || 20,
-            offset: parseInt(req.query.offset as string) || 0,
+            search,
+            category_id: category_id ? parseInt(category_id) : undefined,
+            city,
+            status: status as EventSearchParams['status'],
+            organizer_id: organizer_id ? parseInt(organizer_id) : undefined,
+            is_featured: is_featured === 'true',
+            start_date: start_date ? new Date(start_date) : undefined,
+            end_date: end_date ? new Date(end_date) : undefined,
+            limit: limit ? parseInt(limit) : undefined,
+            offset: offset ? parseInt(offset) : undefined
         };
-        const result = await EventRepository.search(params);
-        res.status(result.code).json(result);
+
+        const response = await EventRepository.search(params);
+        res.status(response.code).json(response);
+    }
+
+    static async getById(req: Request, res: Response) {
+        const { id } = req.params as { id: string };
+        const response = await EventRepository.findById(parseInt(id));
+        if (response.status) {
+            EventRepository.incrementViews(parseInt(id)).catch(() => {});
+        }
+        res.status(response.code).json(response);
+    }
+
+    static async getByCode(req: Request, res: Response) {
+        const { code } = req.params as { code: string };
+        const response = await EventRepository.findByCode(code);
+        res.status(response.code).json(response);
     }
 
     static async create(req: Request, res: Response) {
-        const result = await EventRepository.create(req.body);
-        res.status(result.code).json(result);
+        const response = await EventRepository.create(req.body);
+        res.status(response.code).json(response);
     }
 
     static async update(req: Request, res: Response) {
-        const id = parseInt((req.params as { id: string }).id);
-        const result = await EventRepository.update(id, req.body);
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await EventRepository.update(parseInt(id), req.body);
+        res.status(response.code).json(response);
     }
 
+    // Neither of these publishes directly anymore — organizers submit for
+    // admin validation; only EventValidationController.approveEvent (the
+    // real admin-gated route, under /admin/events/:id/approve) sets
+    // status='published'. Both kept (rather than removed) so any existing
+    // caller of either route keeps working, just without the ability to
+    // self-approve.
     static async publish(req: Request, res: Response) {
-        const id = parseInt((req.params as { id: string }).id);
-        const result = await EventRepository.updateStatus(id, 'pending');
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await EventRepository.submitForValidation(parseInt(id));
+        res.status(response.code).json(response);
     }
 
     static async approve(req: Request, res: Response) {
-        const id = parseInt((req.params as { id: string }).id);
-        const result = await EventRepository.updateStatus(id, 'published');
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await EventRepository.submitForValidation(parseInt(id));
+        res.status(response.code).json(response);
     }
 
     static async cancel(req: Request, res: Response) {
-        const id = parseInt((req.params as { id: string }).id);
-        const result = await EventRepository.updateStatus(id, 'cancelled');
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await EventRepository.updateStatus(parseInt(id), 'cancelled');
+        res.status(response.code).json(response);
     }
 
     static async delete(req: Request, res: Response) {
-        const id = parseInt((req.params as { id: string }).id);
-        const result = await EventRepository.delete(id);
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await EventRepository.delete(parseInt(id));
+        res.status(response.code).json(response);
     }
 
-    // Ticket Types for event
+    // Ticket types (nested under an event)
+
     static async getTicketTypes(req: Request, res: Response) {
-        const eventId = parseInt((req.params as { id: string }).id);
-        const result = await TicketTypeRepository.findByEventId(eventId);
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await TicketTypeRepository.findByEventId(parseInt(id));
+        res.status(response.code).json(response);
     }
 
     static async createTicketType(req: Request, res: Response) {
-        const eventId = parseInt((req.params as { id: string }).id);
-        const result = await TicketTypeRepository.create({ ...req.body, event_id: eventId });
-        res.status(result.code).json(result);
+        const { id } = req.params as { id: string };
+        const response = await TicketTypeRepository.create({ ...req.body, event_id: parseInt(id) });
+        res.status(response.code).json(response);
     }
 
     static async updateTicketType(req: Request, res: Response) {
-        const typeId = parseInt((req.params as { typeId: string }).typeId);
-        const result = await TicketTypeRepository.update(typeId, req.body);
-        res.status(result.code).json(result);
+        const { typeId } = req.params as { id: string; typeId: string };
+        const response = await TicketTypeRepository.update(parseInt(typeId), req.body);
+        res.status(response.code).json(response);
     }
 
     static async deleteTicketType(req: Request, res: Response) {
-        const typeId = parseInt((req.params as { typeId: string }).typeId);
-        const result = await TicketTypeRepository.delete(typeId);
-        res.status(result.code).json(result);
+        const { typeId } = req.params as { id: string; typeId: string };
+        const response = await TicketTypeRepository.delete(parseInt(typeId));
+        res.status(response.code).json(response);
     }
 }

@@ -1,4 +1,6 @@
-import pgpDb from "../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgAny } from "../utils/prisma-compat";
 import ResponseModel from "../models/response.model";
 import {
     DashboardData,
@@ -55,7 +57,7 @@ export class DashboardRepository {
         const params = agencyId ? [agencyId] : [];
 
         // Get current period stats
-        const currentStats = await pgpDb.one(`
+        const currentStats = await pgOne(`
             SELECT
                 COALESCE(SUM(b.total_price), 0) as total_revenue,
                 COUNT(DISTINCT b.id) as total_bookings,
@@ -72,7 +74,7 @@ export class DashboardRepository {
         `, params);
 
         // Get previous period stats for comparison
-        const previousStats = await pgpDb.one(`
+        const previousStats = await pgOne(`
             SELECT
                 COALESCE(SUM(b.total_price), 0) as total_revenue,
                 COUNT(DISTINCT b.id) as total_bookings,
@@ -125,7 +127,7 @@ export class DashboardRepository {
         const agencyFilter = agencyId ? 'AND ag.id = $2' : '';
         const params = agencyId ? [days, agencyId] : [days];
 
-        const data = await pgpDb.manyOrNone(`
+        const data = await pgAny(`
             SELECT
                 DATE(b.booking_date) as date,
                 COALESCE(SUM(b.total_price), 0) as revenue,
@@ -155,7 +157,7 @@ export class DashboardRepository {
         const agencyFilter = agencyId ? 'AND ag.id = $1' : '';
         const params = agencyId ? [agencyId] : [];
 
-        const data = await pgpDb.one(`
+        const data = await pgOne(`
             SELECT
                 COUNT(DISTINCT gts.id) FILTER (WHERE gts.status = 'booked') as occupied,
                 COUNT(DISTINCT gts.id) FILTER (WHERE gts.status = 'available') as available,
@@ -188,7 +190,7 @@ export class DashboardRepository {
         const agencyFilter = agencyId ? `AND ag.id = $2` : '';
         const params = agencyId ? [limit, agencyId] : [limit];
 
-        const trips = await pgpDb.manyOrNone(`
+        const trips = await pgAny(`
             SELECT
                 gt.id,
                 gt.trip_id,
@@ -235,7 +237,7 @@ export class DashboardRepository {
         const agencyFilter = agencyId ? `AND ag.id = $2` : '';
         const params = agencyId ? [limit, agencyId] : [limit];
 
-        const bookings = await pgpDb.manyOrNone(`
+        const bookings = await pgAny(`
             SELECT
                 b.id,
                 b.booking_reference,

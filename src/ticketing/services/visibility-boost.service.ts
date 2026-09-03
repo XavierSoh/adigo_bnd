@@ -1,4 +1,6 @@
-import pgpDb from '../../config/pgdb';
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult, toPrismaTimestampParam } from "../../utils/prisma-compat";
 
 /**
  * Visibility Boost Service
@@ -50,7 +52,7 @@ export class VisibilityBoostService {
             const serviceType = type === 'homepage' ? 'boost_homepage' : 'boost_category';
             const subtype = `${duration}days`;
 
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT
                     base_price as price,
                     duration_days as duration,
@@ -128,7 +130,7 @@ export class VisibilityBoostService {
     }> {
         try {
             // Homepage options
-            const homepage = await pgpDb.any(`
+            const homepage = await pgAny(`
                 SELECT
                     base_price as price,
                     duration_days as duration,
@@ -144,7 +146,7 @@ export class VisibilityBoostService {
             `);
 
             // Category options
-            const category = await pgpDb.any(`
+            const category = await pgAny(`
                 SELECT
                     base_price as price,
                     duration_days as duration,
@@ -200,7 +202,7 @@ export class VisibilityBoostService {
             );
 
             // Update event with boost configuration
-            await pgpDb.none(`
+            await pgNone(`
                 UPDATE event
                 SET
                     boost_visibility = TRUE,
@@ -218,8 +220,8 @@ export class VisibilityBoostService {
                 config.duration_days,
                 config.total_cost,
                 config.homepage || config.category,
-                startDate,
-                endDate,
+                toPrismaTimestampParam(startDate),
+                toPrismaTimestampParam(endDate),
                 config.homepage && config.category ? 'both' :
                     config.homepage ? 'homepage' : 'category',
                 config.total_cost
@@ -245,7 +247,7 @@ export class VisibilityBoostService {
      */
     static async checkAndExpireBoosts(): Promise<number> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event
                 SET
                     is_featured = FALSE,
@@ -275,7 +277,7 @@ export class VisibilityBoostService {
      */
     static async getActiveBoostedEvents(): Promise<any[]> {
         try {
-            const events = await pgpDb.any(`
+            const events = await pgAny(`
                 SELECT
                     id,
                     title,

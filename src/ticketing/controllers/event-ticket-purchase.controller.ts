@@ -11,6 +11,7 @@ import { QRCodeService } from '../services/qrcode.service';
 import { WalletRepository } from '../../repository/wallet.repository';
 import { NotificationService } from '../../services/notification.service';
 import { I18n } from '../../utils/i18n';
+import { PaymentService } from '../../services/payment/payment.service';
 
 export class EventTicketPurchaseController {
 
@@ -23,9 +24,23 @@ export class EventTicketPurchaseController {
             const lang = req.lang || 'en';
             const purchaseData: EventTicketPurchaseCreateDto = req.body;
 
+            // customer_id always comes from the authenticated token, never from
+            // the request body — otherwise any logged-in customer could pass an
+            // arbitrary customer_id and buy tickets charged to someone else's
+            // wallet (same class of issue fixed on the wallet endpoints).
+            if (!req.userId) {
+                res.status(401).json({
+                    status: false,
+                    message: 'Unauthorized',
+                    code: 401
+                });
+                return;
+            }
+            purchaseData.customer_id = req.userId;
+
             // Validate required fields
             if (!purchaseData.event_id || !purchaseData.ticket_type_id ||
-                !purchaseData.customer_id || !purchaseData.quantity) {
+                !purchaseData.quantity) {
                 res.status(400).json({
                     status: false,
                     message: I18n.t('required_fields', lang),
@@ -132,11 +147,49 @@ export class EventTicketPurchaseController {
                     body: confirmResult.body,
                     code: 200
                 });
+            } else if (purchaseData.payment_method === 'orangeMoney') {
+                const subscriberMsisdn = (req.body as any).subscriber_msisdn || purchaseData.attendee_phone;
+
+                if (!subscriberMsisdn) {
+                    await EventTicketPurchaseRepository.cancel(ticket.id, 'Numéro Orange Money manquant');
+                    res.status(400).json({
+                        status: false,
+                        message: 'subscriber_msisdn (numéro Orange Money du client) requis',
+                        code: 400
+                    });
+                    return;
+                }
+
+                const paymentResult = await PaymentService.initiate({
+                    customerId: purchaseData.customer_id,
+                    purpose: 'ticket_purchase',
+                    purposeRefId: ticket.id,
+                    subscriberMsisdn,
+                    amount: ticket.total_price,
+                    description: `Billet(s) événement #${ticket.event_id}`.slice(0, 100),
+                });
+
+                if (!paymentResult.status) {
+                    // Cancel the pending ticket if Orange Money couldn't even be reached/initiated —
+                    // final confirmation still happens asynchronously via the settlement handler
+                    // once the customer actually approves on their phone (see PaymentService.checkStatus).
+                    await EventTicketPurchaseRepository.cancel(ticket.id, paymentResult.message);
+                    res.status(paymentResult.code).json(paymentResult);
+                    return;
+                }
+
+                res.status(200).json({
+                    status: true,
+                    message: paymentResult.message,
+                    body: { ticket, payment: paymentResult.body },
+                    code: 200
+                });
             } else {
-                // Mobile Money not implemented in MVP
+                // MTN Mobile Money not implemented yet
+                await EventTicketPurchaseRepository.cancel(ticket.id, 'Moyen de paiement non supporté');
                 res.status(501).json({
                     status: false,
-                    message: 'Mobile Money payment not implemented yet. Use wallet.',
+                    message: 'MTN Mobile Money payment not implemented yet. Use wallet or Orange Money.',
                     code: 501
                 });
             }

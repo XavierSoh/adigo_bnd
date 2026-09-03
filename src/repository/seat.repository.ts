@@ -1,23 +1,28 @@
-import pgpDb from "../config/pgdb";
-import { Seat } from "../models/seat.model";  // ton interface Seat
+// Migrated to Prisma's native model API (prisma.seat.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration").
+import { Prisma } from "@prisma/client";
+import prismaDb from "../config/prismaClient";
+import { Seat } from "../models/seat.model";
 import ResponseModel from "../models/response.model";
-import { kSeat } from "../utils/table_names";
 
 export class SeatRepository {
     static async create(seat: Seat): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
-                `INSERT INTO ${kSeat} (
-                    bus_id, seat_number, seat_type, is_active
-                ) VALUES ($1, $2, $3, $4)
-                RETURNING *`,
-                [
-                    seat.bus_id,
-                    seat.seat_number,
-                    seat.seat_type,
-                    seat.is_active ?? true
-                ]
-            );
+            // AMBIGUOUS CASE, flagged not guessed: the `Seat` TS interface
+            // declares seat_number as `string` (e.g. "A1"), but the real DB
+            // column (and every seat row already in it) is `Int` — a
+            // pre-existing mismatch the raw-SQL path tolerated silently (pg
+            // casts a numeric-looking string parameter into an int column).
+            // Prisma's typed client won't accept a string here at compile
+            // time; coerced with Number() to keep the same runtime behavior.
+            const result = await prismaDb.seat.create({
+                data: {
+                    bus_id: seat.bus_id,
+                    seat_number: Number(seat.seat_number),
+                    seat_type: seat.seat_type,
+                    is_active: seat.is_active ?? true,
+                },
+            });
 
             return { status: true, message: "Siège créé", body: result, code: 201 };
         } catch (error) {
@@ -27,10 +32,9 @@ export class SeatRepository {
 
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const seat = await pgpDb.oneOrNone(
-                `SELECT * FROM ${kSeat} WHERE id = $1 AND is_active = TRUE`,
-                [id]
-            );
+            const seat = await prismaDb.seat.findFirst({
+                where: { id, is_active: true },
+            });
 
             if (!seat) {
                 return { status: false, message: "Siège non trouvé", code: 404 };
@@ -44,28 +48,20 @@ export class SeatRepository {
 
     static async update(id: number, seat: Partial<Seat>): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
-                `UPDATE ${kSeat} SET
-                    bus_id = COALESCE($1, bus_id),
-                    seat_number = COALESCE($2, seat_number),
-                    seat_type = COALESCE($3, seat_type),
-                    is_active = COALESCE($4, is_active)
-                WHERE id = $5
-                RETURNING *`,
-                [
-                    seat.bus_id,
-                    seat.seat_number,
-                    seat.seat_type,
-                    seat.is_active,
-                    id
-                ]
-            );
+            const data: Prisma.seatUncheckedUpdateInput = {};
+            if (seat.bus_id !== undefined) data.bus_id = seat.bus_id;
+            if (seat.seat_number !== undefined) data.seat_number = Number(seat.seat_number);
+            if (seat.seat_type !== undefined) data.seat_type = seat.seat_type;
+            if (seat.is_active !== undefined) data.is_active = seat.is_active;
 
-            if (!result) {
+            const result = await prismaDb.seat.updateMany({ where: { id }, data });
+
+            if (result.count === 0) {
                 return { status: false, message: "Siège non trouvé", code: 404 };
             }
+            const updated = await prismaDb.seat.findUnique({ where: { id } });
 
-            return { status: true, message: "Siège mis à jour", body: result, code: 200 };
+            return { status: true, message: "Siège mis à jour", body: updated, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la mise à jour du siège", code: 500 };
         }
@@ -73,12 +69,12 @@ export class SeatRepository {
 
     static async softDelete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
-                `UPDATE ${kSeat} SET is_active = FALSE WHERE id = $1 AND is_active = TRUE`,
-                [id]
-            );
+            const result = await prismaDb.seat.updateMany({
+                where: { id, is_active: true },
+                data: { is_active: false },
+            });
 
-            if (result.rowCount === 0) {
+            if (result.count === 0) {
                 return { status: false, message: "Siège non trouvé ou déjà désactivé", code: 404 };
             }
 
@@ -90,12 +86,12 @@ export class SeatRepository {
 
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
-                `UPDATE ${kSeat} SET is_active = TRUE WHERE id = $1 AND is_active = FALSE`,
-                [id]
-            );
+            const result = await prismaDb.seat.updateMany({
+                where: { id, is_active: false },
+                data: { is_active: true },
+            });
 
-            if (result.rowCount === 0) {
+            if (result.count === 0) {
                 return { status: false, message: "Siège non trouvé ou déjà actif", code: 404 };
             }
 
@@ -107,34 +103,27 @@ export class SeatRepository {
 
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
-                `DELETE FROM ${kSeat} WHERE id = $1`,
-                [id]
-            );
-
-            if (result.rowCount === 0) {
-                return { status: false, message: "Siège non trouvé", code: 404 };
-            }
-
+            await prismaDb.seat.delete({ where: { id } });
             return { status: true, message: "Siège supprimé définitivement", code: 200 };
         } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+                return { status: false, message: "Siège non trouvé", code: 404 };
+            }
             return { status: false, message: "Erreur lors de la suppression du siège", code: 500 };
         }
     }
 
     static async findAllByBus(busId: number): Promise<ResponseModel> {
         try {
-            const seats = await pgpDb.any(
-                `SELECT * FROM ${kSeat} WHERE bus_id = $1 ORDER BY seat_number ASC`,
-                [busId]
-            );
+            const seats = await prismaDb.seat.findMany({
+                where: { bus_id: busId },
+                orderBy: { seat_number: 'asc' },
+            });
 
             return { status: true, message: "Liste des sièges récupérée", body: seats, code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la récupération des sièges", code: 500 };
         }
     }
-
-
 
 }

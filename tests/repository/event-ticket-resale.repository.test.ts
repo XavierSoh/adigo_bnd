@@ -1,4 +1,4 @@
-import { EventTicketResaleRepository } from '../../src/repository/event-ticket-resale.repository';
+import { EventTicketResaleRepository } from '../../src/ticketing/repositories/event-ticket-resale.repository';
 import pgpDb from '../../src/config/pgdb';
 
 jest.mock('../../src/config/pgdb');
@@ -293,7 +293,7 @@ describe('EventTicketResaleRepository', () => {
 
             const params = {
                 event_id: 10,
-                status: 'listed',
+                status: 'listed' as const,
                 min_price: 10000,
                 max_price: 25000,
                 limit: 20,
@@ -405,7 +405,7 @@ describe('EventTicketResaleRepository', () => {
             const purchaseData = {
                 resale_id: 1,
                 buyer_id: 456,
-                payment_method: 'wallet',
+                payment_method: 'wallet' as const,
                 payment_reference: 'PAY-001'
             };
 
@@ -433,7 +433,7 @@ describe('EventTicketResaleRepository', () => {
             const purchaseData = {
                 resale_id: 999,
                 buyer_id: 456,
-                payment_method: 'wallet'
+                payment_method: 'wallet' as const
             };
 
             const result = await EventTicketResaleRepository.purchase(purchaseData);
@@ -456,7 +456,7 @@ describe('EventTicketResaleRepository', () => {
             const purchaseData = {
                 resale_id: 1,
                 buyer_id: 456,
-                payment_method: 'wallet'
+                payment_method: 'wallet' as const
             };
 
             const result = await EventTicketResaleRepository.purchase(purchaseData);
@@ -485,7 +485,7 @@ describe('EventTicketResaleRepository', () => {
             const purchaseData = {
                 resale_id: 1,
                 buyer_id: 123, // Same as seller
-                payment_method: 'wallet'
+                payment_method: 'wallet' as const
             };
 
             const result = await EventTicketResaleRepository.purchase(purchaseData);
@@ -513,7 +513,7 @@ describe('EventTicketResaleRepository', () => {
             const purchaseData = {
                 resale_id: 1,
                 buyer_id: 456,
-                payment_method: 'wallet'
+                payment_method: 'wallet' as const
             };
 
             const result = await EventTicketResaleRepository.purchase(purchaseData);
@@ -543,7 +543,7 @@ describe('EventTicketResaleRepository', () => {
             const purchaseData = {
                 resale_id: 1,
                 buyer_id: 456,
-                payment_method: 'wallet'
+                payment_method: 'wallet' as const
             };
 
             const result = await EventTicketResaleRepository.purchase(purchaseData);

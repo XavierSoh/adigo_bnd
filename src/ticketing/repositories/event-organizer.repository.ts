@@ -1,4 +1,6 @@
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult, toPrismaTimestampParam } from "../../utils/prisma-compat";
 import { EventOrganizer, EventOrganizerCreateDto, EventOrganizerUpdateDto } from "../models/event-organizer.model";
 import ResponseModel from "../../models/response.model";
 import { kEventOrganizer, kCustomer } from "../../utils/table_names";
@@ -25,7 +27,7 @@ export class EventOrganizerRepository {
     // Create new event organizer
     static async create(organizer: EventOrganizerCreateDto, createdBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `INSERT INTO ${kEventOrganizer} (
                     customer_id, organization_name, organization_type,
                     rccm_number, tax_id, business_address,
@@ -74,7 +76,7 @@ export class EventOrganizerRepository {
             );
 
             // Also update the customer table to mark as organizer
-            await pgpDb.none(
+            await pgNone(
                 `UPDATE ${kCustomer} SET is_organizer = TRUE WHERE id = $1`,
                 [organizer.customer_id]
             );
@@ -92,7 +94,7 @@ export class EventOrganizerRepository {
     // Find by customer ID
     static async findByCustomerId(customerId: number): Promise<ResponseModel> {
         try {
-            const organizer = await pgpDb.oneOrNone(
+            const organizer = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE o.customer_id = $1 AND o.is_deleted = FALSE`,
@@ -112,7 +114,7 @@ export class EventOrganizerRepository {
     // Find by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const organizer = await pgpDb.oneOrNone(
+            const organizer = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE o.id = $1 AND o.is_deleted = FALSE`,
@@ -134,7 +136,7 @@ export class EventOrganizerRepository {
         try {
             const whereClause = includeDeleted ? '' : 'WHERE o.is_deleted = FALSE';
 
-            const organizers = await pgpDb.any(
+            const organizers = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 ${whereClause}
@@ -150,7 +152,7 @@ export class EventOrganizerRepository {
     // Update organizer
     static async update(id: number, organizer: EventOrganizerUpdateDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventOrganizer} SET
                     organization_name = COALESCE($1, organization_name),
                     organization_type = COALESCE($2, organization_type),
@@ -214,9 +216,9 @@ export class EventOrganizerRepository {
         verificationNotes?: string
     ): Promise<ResponseModel> {
         try {
-            const verifiedAt = status === 'verified' ? new Date() : null;
+            const verifiedAt = status === 'verified' ? toPrismaTimestampParam(new Date()) : null;
 
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventOrganizer} SET
                     verification_status = $1,
                     verified_by = $2,
@@ -279,7 +281,7 @@ export class EventOrganizerRepository {
 
             query += ' ORDER BY o.created_at DESC';
 
-            const organizers = await pgpDb.any(query, params);
+            const organizers = await pgAny(query, params);
 
             return { status: true, message: "Recherche effectuée", body: organizers, code: 200 };
         } catch (error) {
@@ -290,7 +292,7 @@ export class EventOrganizerRepository {
     // Get verified organizers
     static async getVerified(): Promise<ResponseModel> {
         try {
-            const organizers = await pgpDb.any(
+            const organizers = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE o.verification_status = 'verified' AND o.is_deleted = FALSE
@@ -306,7 +308,7 @@ export class EventOrganizerRepository {
     // Get statistics
     static async getStatistics(): Promise<ResponseModel> {
         try {
-            const stats = await pgpDb.one(
+            const stats = await pgOne(
                 `SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN verification_status = 'pending' THEN 1 ELSE 0 END) as pending,
@@ -329,7 +331,7 @@ export class EventOrganizerRepository {
     // Soft delete organizer
     static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `UPDATE ${kEventOrganizer} SET
                     is_deleted = TRUE,
                     deleted_at = NOW(),
@@ -352,7 +354,7 @@ export class EventOrganizerRepository {
     // Restore soft deleted organizer
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventOrganizer} SET
                     is_deleted = FALSE,
                     deleted_at = NULL,
@@ -376,7 +378,7 @@ export class EventOrganizerRepository {
     // Hard delete organizer
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventOrganizer} WHERE id = $1`,
                 [id]
             );

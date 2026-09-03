@@ -1,4 +1,4 @@
-import pgpDb from "../config/pgdb";
+import { pgAny, pgOneOrNone, pgNone } from "../utils/prisma-compat";
 import * as tbl from "../utils/table_names";
 
 export class TripGenerationService {
@@ -10,7 +10,7 @@ export class TripGenerationService {
             console.log(`📅 Génération du ${startDate.toISOString()} au ${endDate.toISOString()}`);
             
             // 1. Récupérer tous les trips avec récurrence
-            const trips = await pgpDb.any(`
+            const trips = await pgAny(`
                 SELECT t.*, rp.type as recurrence_type, rp.interval, 
                        rp.days_of_week, rp.end_date as recurrence_end_date,
                        rp.exceptions
@@ -222,8 +222,8 @@ export class TripGenerationService {
         
         const busCapacity = await this.getBusCapacity(trip.bus_id);
           
-        await pgpDb.none(`
-            INSERT INTO ${tbl.kGeneratedTrip} 
+        await pgNone(`
+            INSERT INTO ${tbl.kGeneratedTrip}
             (trip_id, original_departure_time, actual_departure_time, 
              actual_arrival_time, available_seats, bus_id)
             VALUES ($1, $2, $3, $4, $5, $6) 
@@ -232,7 +232,7 @@ export class TripGenerationService {
     }
     
     private async getBusCapacity(busId: number): Promise<number> {
-        const bus = await pgpDb.oneOrNone(`
+        const bus = await pgOneOrNone(`
             SELECT capacity FROM ${tbl.kBus} WHERE id = $1 AND is_deleted = false
         `, [busId]);
         
@@ -240,7 +240,7 @@ export class TripGenerationService {
     }
     
     private async logGeneration(startDate: Date, endDate: Date, count: number, userId: number): Promise<void> {
-        await pgpDb.none(`
+        await pgNone(`
             INSERT INTO ${tbl.kTripGenerationLog} 
             (generation_date, trips_generated, period_start, period_end, generated_by)
             VALUES (CURRENT_DATE, $1, $2, $3, $4)
@@ -248,7 +248,7 @@ export class TripGenerationService {
     }
     
     async cleanupGeneratedTrips(startDate: Date, endDate: Date): Promise<void> {
-        await pgpDb.none(`
+        await pgNone(`
             DELETE FROM ${tbl.kGeneratedTrip} 
             WHERE actual_departure_time >= $1 
             AND actual_departure_time <= $2

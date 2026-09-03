@@ -1,4 +1,6 @@
-import pgpDb from '../../config/pgdb';
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 import {
     EventPremiumServicePricing,
     EventPremiumServicePricingCreateDto,
@@ -22,7 +24,7 @@ export class EventPremiumServicePricingRepository {
         data: EventPremiumServicePricingCreateDto
     ): Promise<{ status: boolean; message: string; body?: EventPremiumServicePricing; code: number }> {
         try {
-            const pricing = await pgpDb.one(`
+            const pricing = await pgOne(`
                 INSERT INTO event_premium_service_pricing (
                     service_type,
                     service_subtype,
@@ -80,7 +82,7 @@ export class EventPremiumServicePricingRepository {
      */
     static async findById(id: number): Promise<{ status: boolean; message: string; body?: EventPremiumServicePricing; code: number }> {
         try {
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT * FROM event_premium_service_pricing
                 WHERE id = $1
                 AND is_deleted = FALSE
@@ -118,7 +120,7 @@ export class EventPremiumServicePricingRepository {
         try {
             const whereClause = includeDeleted ? '' : 'WHERE is_deleted = FALSE';
 
-            const pricings = await pgpDb.any(`
+            const pricings = await pgAny(`
                 SELECT * FROM event_premium_service_pricing
                 ${whereClause}
                 ORDER BY service_type, min_capacity NULLS FIRST, duration_days NULLS FIRST
@@ -154,7 +156,7 @@ export class EventPremiumServicePricingRepository {
                 whereConditions.push('is_active = TRUE');
             }
 
-            const pricings = await pgpDb.any(`
+            const pricings = await pgAny(`
                 SELECT * FROM event_premium_service_pricing
                 WHERE ${whereConditions.join(' AND ')}
                 ORDER BY
@@ -203,7 +205,7 @@ export class EventPremiumServicePricingRepository {
 
             const whereClause = whereConditions.join(' AND ');
 
-            const pricings = await pgpDb.any(`
+            const pricings = await pgAny(`
                 SELECT * FROM event_premium_service_pricing
                 WHERE ${whereClause}
                 ORDER BY service_type, base_price ASC
@@ -231,7 +233,7 @@ export class EventPremiumServicePricingRepository {
         capacity: number
     ): Promise<{ status: boolean; message?: string; body?: EventPremiumServicePricing; code: number }> {
         try {
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT * FROM event_premium_service_pricing
                 WHERE service_type = 'design'
                 AND is_active = TRUE
@@ -277,7 +279,7 @@ export class EventPremiumServicePricingRepository {
         try {
             const serviceType = boostType === 'homepage' ? 'boost_homepage' : 'boost_category';
 
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 SELECT * FROM event_premium_service_pricing
                 WHERE service_type = $1
                 AND duration_days = $2
@@ -384,7 +386,7 @@ export class EventPremiumServicePricingRepository {
 
             params.push(id);
 
-            const pricing = await pgpDb.oneOrNone(`
+            const pricing = await pgOneOrNone(`
                 UPDATE event_premium_service_pricing
                 SET ${updates.join(', ')}
                 WHERE id = $${paramIndex}
@@ -422,7 +424,7 @@ export class EventPremiumServicePricingRepository {
      */
     static async toggleActive(id: number): Promise<{ status: boolean; message: string; code: number }> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event_premium_service_pricing
                 SET is_active = NOT is_active
                 WHERE id = $1
@@ -458,7 +460,7 @@ export class EventPremiumServicePricingRepository {
      */
     static async softDelete(id: number): Promise<{ status: boolean; message: string; code: number }> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event_premium_service_pricing
                 SET
                     is_deleted = TRUE,
@@ -496,7 +498,7 @@ export class EventPremiumServicePricingRepository {
      */
     static async restore(id: number): Promise<{ status: boolean; message: string; code: number }> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 UPDATE event_premium_service_pricing
                 SET
                     is_deleted = FALSE,
@@ -534,7 +536,7 @@ export class EventPremiumServicePricingRepository {
      */
     static async delete(id: number): Promise<{ status: boolean; message: string; code: number }> {
         try {
-            const result = await pgpDb.result(`
+            const result = await pgResult(`
                 DELETE FROM event_premium_service_pricing
                 WHERE id = $1
             `, [id]);

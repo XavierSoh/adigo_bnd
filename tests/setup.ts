@@ -26,6 +26,9 @@ jest.mock('fs', () => ({
 
 // Set test environment variables
 process.env.NODE_ENV = 'test';
+// auth.middleware.ts now requires JWT_SECRET to be set (no more insecure
+// hardcoded fallback) — provide a test-only value so app.ts can be imported.
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-do-not-use-in-prod';
 
 // Global test timeout
 jest.setTimeout(10000);

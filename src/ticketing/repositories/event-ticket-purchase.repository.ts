@@ -4,7 +4,9 @@
  * Handles ticket purchases, QR code generation, and validation
  */
 
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult, pgTransaction } from "../../utils/prisma-compat";
 import {
     EventTicketPurchase,
     EventTicketPurchaseCreateDto,
@@ -21,13 +23,14 @@ export class EventTicketPurchaseRepository {
     static async create(purchase: EventTicketPurchaseCreateDto): Promise<ResponseModel> {
         try {
             // Start transaction
-            return await pgpDb.tx(async t => {
+            return await pgTransaction(async t => {
                 // 1. Check ticket availability
-                const ticketType = await t.oneOrNone(
+                const ticketType = await pgOneOrNone(
                     `SELECT id, price, quantity, available_quantity, event_id
                     FROM event_ticket_type
                     WHERE id = $1 AND is_deleted = FALSE AND is_active = TRUE`,
-                    [purchase.ticket_type_id]
+                    [purchase.ticket_type_id],
+                    t
                 );
 
                 if (!ticketType) {
@@ -48,7 +51,7 @@ export class EventTicketPurchaseRepository {
                 const totalPrice = purchase.final_price || subtotal;
 
                 // 3. Create purchase
-                const result = await t.one(
+                const result = await pgOne(
                     `INSERT INTO ${this.TABLE} (
                         event_id, ticket_type_id, customer_id, quantity,
                         unit_price, subtotal, total_price, final_price,
@@ -79,15 +82,17 @@ export class EventTicketPurchaseRepository {
                         purchase.attendee_phone,
                         purchase.group_id,
                         purchase.is_group_leader
-                    ]
+                    ],
+                    t
                 );
 
                 // 4. Update available quantity
-                await t.none(
+                await pgNone(
                     `UPDATE event_ticket_type
                     SET available_quantity = available_quantity - $1
                     WHERE id = $2`,
-                    [purchase.quantity, purchase.ticket_type_id]
+                    [purchase.quantity, purchase.ticket_type_id],
+                    t
                 );
 
                 return { status: true, message: "Achat créé", body: result, code: 201 };
@@ -106,7 +111,7 @@ export class EventTicketPurchaseRepository {
         walletTransactionId?: number
     ): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `UPDATE ${this.TABLE}
                 SET payment_status = 'paid',
                     status = 'confirmed',
@@ -132,7 +137,7 @@ export class EventTicketPurchaseRepository {
     static async validateTicket(validation: EventTicketValidateDto): Promise<ResponseModel> {
         try {
             // Find ticket by reference
-            const ticket = await pgpDb.oneOrNone(
+            const ticket = await pgOneOrNone(
                 `SELECT * FROM ${this.TABLE}
                 WHERE reference = $1 AND is_deleted = FALSE`,
                 [validation.ticket_reference]
@@ -155,7 +160,7 @@ export class EventTicketPurchaseRepository {
             }
 
             // Validate
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `UPDATE ${this.TABLE}
                 SET is_validated = TRUE,
                     status = 'used',
@@ -210,7 +215,7 @@ export class EventTicketPurchaseRepository {
 
             query += ` ORDER BY t.created_at DESC`;
 
-            const tickets = await pgpDb.any(query, params);
+            const tickets = await pgAny(query, params);
 
             return {
                 status: true,
@@ -227,7 +232,7 @@ export class EventTicketPurchaseRepository {
     // Get ticket by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const ticket = await pgpDb.oneOrNone(
+            const ticket = await pgOneOrNone(
                 `SELECT
                     t.*,
                     json_build_object(
@@ -275,7 +280,7 @@ export class EventTicketPurchaseRepository {
     // Get tickets for an event
     static async findByEvent(eventId: number): Promise<ResponseModel> {
         try {
-            const tickets = await pgpDb.any(
+            const tickets = await pgAny(
                 `SELECT
                     t.*,
                     json_build_object(
@@ -311,10 +316,11 @@ export class EventTicketPurchaseRepository {
     // Cancel ticket
     static async cancel(ticketId: number, reason: string): Promise<ResponseModel> {
         try {
-            return await pgpDb.tx(async t => {
-                const ticket = await t.oneOrNone(
+            return await pgTransaction(async t => {
+                const ticket = await pgOneOrNone(
                     `SELECT * FROM ${this.TABLE} WHERE id = $1`,
-                    [ticketId]
+                    [ticketId],
+                    t
                 );
 
                 if (!ticket) {
@@ -326,22 +332,24 @@ export class EventTicketPurchaseRepository {
                 }
 
                 // Cancel ticket
-                await t.none(
+                await pgNone(
                     `UPDATE ${this.TABLE}
                     SET status = 'cancelled',
                         cancellation_date = CURRENT_TIMESTAMP,
                         cancellation_reason = $2,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = $1`,
-                    [ticketId, reason]
+                    [ticketId, reason],
+                    t
                 );
 
                 // Restore availability
-                await t.none(
+                await pgNone(
                     `UPDATE event_ticket_type
                     SET available_quantity = available_quantity + $1
                     WHERE id = $2`,
-                    [ticket.quantity, ticket.ticket_type_id]
+                    [ticket.quantity, ticket.ticket_type_id],
+                    t
                 );
 
                 return { status: true, message: "Ticket annulé", code: 200 };
@@ -355,7 +363,7 @@ export class EventTicketPurchaseRepository {
     // Refund ticket
     static async refund(ticketId: number, refund: EventTicketRefundDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `UPDATE ${this.TABLE}
                 SET status = 'refunded',
                     payment_status = 'refunded',

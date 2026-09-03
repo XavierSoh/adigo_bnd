@@ -1,4 +1,6 @@
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 import { EventCategory, EventCategoryCreateDto, EventCategoryUpdateDto } from "../models/event-category.model";
 import { EventCreateDto } from "../models/event.model";
 import ResponseModel from "../../models/response.model";
@@ -10,7 +12,7 @@ export class EventCategoryRepository {
     // Create new event
 static async create(event: EventCreateDto, createdBy?: number): Promise<ResponseModel> {
     try {
-        const result = await pgpDb.one(
+        const result = await pgOne(
             `INSERT INTO ${kEvent} (
                 title, description, category_id, organizer_id,
                 event_date, event_end_date, registration_deadline,
@@ -84,7 +86,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
     // Find by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const category = await pgpDb.oneOrNone(
+            const category = await pgOneOrNone(
                 `SELECT * FROM ${kEventCategory} WHERE id = $1 AND is_deleted = FALSE`,
                 [id]
             );
@@ -119,7 +121,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
 
             query += ' ORDER BY display_order ASC, name_en ASC';
 
-            const categories = await pgpDb.any(query);
+            const categories = await pgAny(query);
 
             return { status: true, message: "Liste des catégories récupérée", body: categories, code: 200 };
         } catch (error) {
@@ -130,7 +132,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
     // Update category
     static async update(id: number, category: EventCategoryUpdateDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventCategory} SET
                     name_en = COALESCE($1, name_en),
                     name_fr = COALESCE($2, name_fr),
@@ -169,7 +171,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
     // Soft delete category
     static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `UPDATE ${kEventCategory} SET
                     is_deleted = TRUE,
                     deleted_at = NOW(),
@@ -192,7 +194,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
     // Restore soft deleted category
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventCategory} SET
                     is_deleted = FALSE,
                     deleted_at = NULL,
@@ -216,7 +218,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
     // Hard delete category
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventCategory} WHERE id = $1`,
                 [id]
             );
@@ -234,7 +236,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
     // Get category statistics (number of events per category)
     static async getStatistics(): Promise<ResponseModel> {
         try {
-            const stats = await pgpDb.any(
+            const stats = await pgAny(
                 `SELECT
                     c.id,
                     c.name_en,
@@ -261,7 +263,7 @@ static async create(event: EventCreateDto, createdBy?: number): Promise<Response
         try {
             // Update display_order for each category
             for (const item of categoryOrders) {
-                await pgpDb.none(
+                await pgNone(
                     `UPDATE ${kEventCategory} SET display_order = $1, updated_at = NOW() WHERE id = $2`,
                     [item.display_order, item.id]
                 );

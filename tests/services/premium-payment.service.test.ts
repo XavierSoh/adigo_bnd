@@ -1,11 +1,11 @@
-import { PremiumPaymentService } from '../../src/services/premium-payment.service';
-import { PremiumDesignService } from '../../src/services/premium-design.service';
-import { VisibilityBoostService } from '../../src/services/visibility-boost.service';
+import { PremiumPaymentService } from '../../src/ticketing/services/premium-payment.service';
+import { PremiumDesignService } from '../../src/ticketing/services/premium-design.service';
+import { VisibilityBoostService } from '../../src/ticketing/services/visibility-boost.service';
 import pgpDb from '../../src/config/pgdb';
 
 jest.mock('../../src/config/pgdb');
-jest.mock('../../src/services/premium-design.service');
-jest.mock('../../src/services/visibility-boost.service');
+jest.mock('../../src/ticketing/services/premium-design.service');
+jest.mock('../../src/ticketing/services/visibility-boost.service');
 
 describe('PremiumPaymentService', () => {
     beforeEach(() => {

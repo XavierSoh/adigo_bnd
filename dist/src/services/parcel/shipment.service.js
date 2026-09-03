@@ -138,7 +138,7 @@ class ShipmentService {
             throw error;
         }
         finally {
-            client.release();
+            // Connection is managed by pg-promise
         }
     }
     /**

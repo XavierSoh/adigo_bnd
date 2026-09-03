@@ -7,6 +7,7 @@ import {
     FavoriteController,
     ReviewController
 } from "../../controllers/ticketing";
+import adminTicketingRouter, { organizerDashboardRouter } from "../../ticketing/routes/admin.router";
 
 const ticketingRouter = Router();
 
@@ -80,5 +81,11 @@ ticketingRouter.post("/reviews", ReviewController.create);
 ticketingRouter.put("/reviews/:id", ReviewController.update);
 ticketingRouter.delete("/reviews/:id", ReviewController.delete);
 ticketingRouter.patch("/reviews/:id/approve", ReviewController.approve);
+
+// ============================================
+// ADMIN SURFACE (desktop BILLETTERIE admin screens)
+// ============================================
+ticketingRouter.use("/admin", adminTicketingRouter);
+ticketingRouter.use("/organizer", organizerDashboardRouter);
 
 export default ticketingRouter;

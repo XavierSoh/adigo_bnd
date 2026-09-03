@@ -1,4 +1,4 @@
-import pgpDb from "./pgdb";
+import { pgNone } from "../utils/prisma-compat";
 import { kBooking } from "../utils/table_names";
 
 export const migrateBookingPaymentMethod = async () => {
@@ -6,14 +6,14 @@ export const migrateBookingPaymentMethod = async () => {
         console.log('🔄 Starting booking payment_method migration...');
 
         // Drop the old constraint
-        await pgpDb.none(`
+        await pgNone(`
             ALTER TABLE ${kBooking}
             DROP CONSTRAINT IF EXISTS booking_payment_method_check
         `);
         console.log('✅ Dropped old payment_method constraint');
 
         // Add new constraint with 'wallet' included
-        await pgpDb.none(`
+        await pgNone(`
             ALTER TABLE ${kBooking}
             ADD CONSTRAINT booking_payment_method_check
             CHECK (payment_method IN ('orangeMoney', 'mtn', 'cash', 'wallet'))

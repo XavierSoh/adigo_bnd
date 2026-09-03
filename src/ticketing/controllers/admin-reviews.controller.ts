@@ -6,7 +6,10 @@
 
 import { Request, Response } from 'express';
 import { I18n } from '../../utils/i18n';
-import pgpDb from '../../config/pgdb';
+// Migrated to Prisma's native model API — logic lives in
+// AdminReviewsRepository (prisma.event_review.*), see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration", tier 3).
+import { AdminReviewsRepository } from '../repositories/admin-reviews.repository';
 
 export class AdminReviewsController {
 
@@ -19,57 +22,12 @@ export class AdminReviewsController {
             const lang = req.lang || 'en';
             const { limit = 50, offset = 0, event_id, rating } = req.query;
 
-            let query = `
-                SELECT
-                    er.*,
-                    json_build_object(
-                        'id', e.id,
-                        'title', e.title,
-                        'event_code', e.event_code
-                    ) AS event,
-                    json_build_object(
-                        'id', c.id,
-                        'first_name', c.first_name,
-                        'last_name', c.last_name,
-                        'email', c.email
-                    ) AS customer
-                FROM event_review er
-                JOIN event e ON er.event_id = e.id
-                JOIN customer c ON er.customer_id = c.id
-                WHERE er.is_deleted = FALSE
-            `;
-
-            const params: any[] = [];
-
-            if (event_id) {
-                params.push(event_id);
-                query += ` AND er.event_id = $${params.length}`;
-            }
-
-            if (rating) {
-                params.push(rating);
-                query += ` AND er.rating = $${params.length}`;
-            }
-
-            query += ` ORDER BY er.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-            params.push(parseInt(limit as string), parseInt(offset as string));
-
-            const reviews = await pgpDb.any(query, params);
-
-            // Get total count
-            let countQuery = `SELECT COUNT(*)::int AS total FROM event_review WHERE is_deleted = FALSE`;
-            const countParams: any[] = [];
-
-            if (event_id) {
-                countParams.push(event_id);
-                countQuery += ` AND event_id = $${countParams.length}`;
-            }
-            if (rating) {
-                countParams.push(rating);
-                countQuery += ` AND rating = $${countParams.length}`;
-            }
-
-            const { total } = await pgpDb.one(countQuery, countParams);
+            const { reviews, total } = await AdminReviewsRepository.findAll(
+                parseInt(limit as string),
+                parseInt(offset as string),
+                event_id ? parseInt(event_id as string) : undefined,
+                rating ? parseInt(rating as string) : undefined
+            );
 
             res.status(200).json({
                 status: true,
@@ -104,25 +62,7 @@ export class AdminReviewsController {
         try {
             const lang = req.lang || 'en';
 
-            const reviews = await pgpDb.any(`
-                SELECT
-                    er.*,
-                    json_build_object(
-                        'id', e.id,
-                        'title', e.title
-                    ) AS event,
-                    json_build_object(
-                        'id', c.id,
-                        'first_name', c.first_name,
-                        'last_name', c.last_name
-                    ) AS customer
-                FROM event_review er
-                JOIN event e ON er.event_id = e.id
-                JOIN customer c ON er.customer_id = c.id
-                WHERE er.is_deleted = FALSE
-                AND er.is_flagged = TRUE
-                ORDER BY er.created_at DESC
-            `);
+            const reviews = await AdminReviewsRepository.findFlagged();
 
             res.status(200).json({
                 status: true,
@@ -152,12 +92,7 @@ export class AdminReviewsController {
             const { reason } = req.body;
             const adminId = req.userId;
 
-            const updatedReview = await pgpDb.one(`
-                UPDATE event_review
-                SET is_flagged = TRUE, flag_reason = $2, flagged_by = $3, flagged_at = CURRENT_TIMESTAMP
-                WHERE id = $1
-                RETURNING *
-            `, [reviewId, reason || 'Inappropriate content', adminId]);
+            const updatedReview = await AdminReviewsRepository.flag(reviewId, reason || 'Inappropriate content', adminId);
 
             res.status(200).json({
                 status: true,
@@ -185,12 +120,7 @@ export class AdminReviewsController {
             const lang = req.lang || 'en';
             const reviewId = parseInt((req.params as { id: string }).id);
 
-            const updatedReview = await pgpDb.one(`
-                UPDATE event_review
-                SET is_flagged = FALSE, flag_reason = NULL, flagged_by = NULL, flagged_at = NULL
-                WHERE id = $1
-                RETURNING *
-            `, [reviewId]);
+            const updatedReview = await AdminReviewsRepository.unflag(reviewId);
 
             res.status(200).json({
                 status: true,
@@ -217,15 +147,9 @@ export class AdminReviewsController {
         try {
             const lang = req.lang || 'en';
             const reviewId = parseInt((req.params as { id: string }).id);
-            const { reason } = req.body;
             const adminId = req.userId;
 
-            const deletedReview = await pgpDb.one(`
-                UPDATE event_review
-                SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP, deleted_by = $2, deletion_reason = $3
-                WHERE id = $1
-                RETURNING *
-            `, [reviewId, adminId, reason || 'Deleted by admin']);
+            const deletedReview = await AdminReviewsRepository.softDelete(reviewId, adminId);
 
             res.status(200).json({
                 status: true,
@@ -252,20 +176,7 @@ export class AdminReviewsController {
         try {
             const lang = req.lang || 'en';
 
-            const stats = await pgpDb.one(`
-                SELECT
-                    COUNT(*)::int AS total_reviews,
-                    COUNT(*) FILTER (WHERE is_flagged = TRUE)::int AS flagged_reviews,
-                    ROUND(AVG(rating), 2) AS average_rating,
-                    COUNT(*) FILTER (WHERE rating = 5)::int AS five_star,
-                    COUNT(*) FILTER (WHERE rating = 4)::int AS four_star,
-                    COUNT(*) FILTER (WHERE rating = 3)::int AS three_star,
-                    COUNT(*) FILTER (WHERE rating = 2)::int AS two_star,
-                    COUNT(*) FILTER (WHERE rating = 1)::int AS one_star,
-                    COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '7 days')::int AS reviews_last_7_days
-                FROM event_review
-                WHERE is_deleted = FALSE
-            `);
+            const stats = await AdminReviewsRepository.getStats();
 
             res.status(200).json({
                 status: true,

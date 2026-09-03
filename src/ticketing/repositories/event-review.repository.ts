@@ -1,4 +1,6 @@
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 import { EventReview, EventReviewCreateDto, EventReviewUpdateDto } from "../models/event-review.model";
 import ResponseModel from "../../models/response.model";
 import { kEventReview, kEvent, kCustomer } from "../../utils/table_names";
@@ -32,7 +34,7 @@ export class EventReviewRepository {
     static async create(review: EventReviewCreateDto): Promise<ResponseModel> {
         try {
             // Check if customer already reviewed this event
-            const existing = await pgpDb.oneOrNone(
+            const existing = await pgOneOrNone(
                 `SELECT id FROM ${kEventReview}
                 WHERE customer_id = $1 AND event_id = $2 AND is_deleted = FALSE`,
                 [review.customer_id, review.event_id]
@@ -43,13 +45,13 @@ export class EventReviewRepository {
             }
 
             // Check if customer has a ticket for this event (for verified attendee)
-            const hasTicket = await pgpDb.oneOrNone(
+            const hasTicket = await pgOneOrNone(
                 `SELECT id FROM event_ticket_purchase
                 WHERE customer_id = $1 AND event_id = $2 AND status IN ('confirmed', 'used')`,
                 [review.customer_id, review.event_id]
             );
 
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `INSERT INTO ${kEventReview} (
                     event_id, customer_id, ticket_purchase_id,
                     rating, title, comment,
@@ -79,7 +81,7 @@ export class EventReviewRepository {
     // Find by ID
     static async findById(id: number): Promise<ResponseModel> {
         try {
-            const review = await pgpDb.oneOrNone(
+            const review = await pgOneOrNone(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE r.id = $1 AND r.is_deleted = FALSE`,
@@ -111,7 +113,7 @@ export class EventReviewRepository {
 
             query += ' ORDER BY r.is_verified_attendee DESC, r.created_at DESC';
 
-            const reviews = await pgpDb.any(query, [eventId]);
+            const reviews = await pgAny(query, [eventId]);
 
             return { status: true, message: "Évaluations de l'événement récupérées", body: reviews, code: 200 };
         } catch (error) {
@@ -122,7 +124,7 @@ export class EventReviewRepository {
     // Find by customer
     static async findByCustomer(customerId: number): Promise<ResponseModel> {
         try {
-            const reviews = await pgpDb.any(
+            const reviews = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE r.customer_id = $1 AND r.is_deleted = FALSE
@@ -139,7 +141,7 @@ export class EventReviewRepository {
     // Update review
     static async update(id: number, review: EventReviewUpdateDto): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventReview} SET
                     rating = COALESCE($1, rating),
                     title = COALESCE($2, title),
@@ -163,7 +165,7 @@ export class EventReviewRepository {
     // Approve review (admin)
     static async approve(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventReview} SET
                     is_approved = TRUE,
                     updated_at = NOW()
@@ -185,7 +187,7 @@ export class EventReviewRepository {
     // Flag review (admin or user)
     static async flag(id: number, flagReason: string): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventReview} SET
                     is_flagged = TRUE,
                     flag_reason = $1,
@@ -208,7 +210,7 @@ export class EventReviewRepository {
     // Unflag review
     static async unflag(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventReview} SET
                     is_flagged = FALSE,
                     flag_reason = NULL,
@@ -231,7 +233,7 @@ export class EventReviewRepository {
     // Get statistics by event
     static async getStatisticsByEvent(eventId: number): Promise<ResponseModel> {
         try {
-            const stats = await pgpDb.one(
+            const stats = await pgOne(
                 `SELECT
                     COUNT(*) as total_reviews,
                     AVG(rating) as average_rating,
@@ -260,7 +262,7 @@ export class EventReviewRepository {
     // Get top-rated events
     static async getTopRated(limit: number = 10, minReviews: number = 3): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT
                     e.id,
                     e.title,
@@ -296,7 +298,7 @@ export class EventReviewRepository {
     // Get pending reviews (for moderation)
     static async getPending(): Promise<ResponseModel> {
         try {
-            const reviews = await pgpDb.any(
+            const reviews = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE r.is_approved = FALSE AND r.is_deleted = FALSE
@@ -312,7 +314,7 @@ export class EventReviewRepository {
     // Get flagged reviews
     static async getFlagged(): Promise<ResponseModel> {
         try {
-            const reviews = await pgpDb.any(
+            const reviews = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE r.is_flagged = TRUE AND r.is_deleted = FALSE
@@ -328,7 +330,7 @@ export class EventReviewRepository {
     // Soft delete review
     static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `UPDATE ${kEventReview} SET
                     is_deleted = TRUE,
                     deleted_at = NOW(),
@@ -351,7 +353,7 @@ export class EventReviewRepository {
     // Restore soft deleted review
     static async restore(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.oneOrNone(
+            const result = await pgOneOrNone(
                 `UPDATE ${kEventReview} SET
                     is_deleted = FALSE,
                     deleted_at = NULL,
@@ -375,7 +377,7 @@ export class EventReviewRepository {
     // Hard delete review
     static async delete(id: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventReview} WHERE id = $1`,
                 [id]
             );

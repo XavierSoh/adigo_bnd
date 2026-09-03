@@ -6,6 +6,7 @@
     
  
     profilerRouter.get('/', ProfileController.getProfiles);
+    profilerRouter.get('/:id', ProfileController.getProfileById);
     profilerRouter.post('/', ProfileController.createProfile);
     profilerRouter.put('/:id', ProfileController.updateProfile);
     profilerRouter.delete('/:id', ProfileController.deleteProfile);

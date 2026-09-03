@@ -6,7 +6,10 @@
 
 import { Request, Response } from 'express';
 import { I18n } from '../../utils/i18n';
-import pgpDb from '../../config/pgdb';
+// Migrated to Prisma's native model API — logic lives in
+// AdminSettingsRepository (prisma.system_settings.*), see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration", tier 3).
+import { AdminSettingsRepository } from '../repositories/admin-settings.repository';
 
 export class AdminSettingsController {
 
@@ -18,24 +21,7 @@ export class AdminSettingsController {
         try {
             const lang = req.lang || 'en';
 
-            const settings = await pgpDb.any(`
-                SELECT * FROM system_settings
-                WHERE is_deleted = FALSE
-                ORDER BY category, setting_key
-            `);
-
-            // Group by category
-            const grouped = settings.reduce((acc: any, setting: any) => {
-                if (!acc[setting.category]) {
-                    acc[setting.category] = {};
-                }
-                acc[setting.category][setting.setting_key] = {
-                    value: setting.setting_value,
-                    description: setting.description,
-                    updated_at: setting.updated_at
-                };
-                return acc;
-            }, {});
+            const grouped = await AdminSettingsRepository.getAllGrouped();
 
             res.status(200).json({
                 status: true,
@@ -62,7 +48,7 @@ export class AdminSettingsController {
         try {
             const lang = req.lang || 'en';
             const settingKey = (req.params as { key: string }).key;
-            const { value } = req.body;
+            const { value, category, description } = req.body;
             const adminId = req.userId;
 
             if (value === undefined) {
@@ -74,12 +60,13 @@ export class AdminSettingsController {
                 return;
             }
 
-            const updatedSetting = await pgpDb.one(`
-                UPDATE system_settings
-                SET setting_value = $2, updated_by = $3, updated_at = CURRENT_TIMESTAMP
-                WHERE setting_key = $1
-                RETURNING *
-            `, [settingKey, value, adminId]);
+            const updatedSetting = await AdminSettingsRepository.upsertSetting(
+                category || 'general',
+                settingKey,
+                value,
+                description || null,
+                adminId
+            );
 
             res.status(200).json({
                 status: true,
@@ -106,11 +93,7 @@ export class AdminSettingsController {
         try {
             const lang = req.lang || 'en';
 
-            const pricing = await pgpDb.any(`
-                SELECT * FROM system_settings
-                WHERE category = 'pricing'
-                AND is_deleted = FALSE
-            `);
+            const pricing = await AdminSettingsRepository.getPricing();
 
             res.status(200).json({
                 status: true,
@@ -139,19 +122,7 @@ export class AdminSettingsController {
             const { pricing_data } = req.body;
             const adminId = req.userId;
 
-            // Update multiple pricing settings
-            const updates = [];
-            for (const [key, value] of Object.entries(pricing_data)) {
-                updates.push(
-                    pgpDb.none(`
-                        UPDATE system_settings
-                        SET setting_value = $1, updated_by = $2, updated_at = CURRENT_TIMESTAMP
-                        WHERE setting_key = $3 AND category = 'pricing'
-                    `, [value, adminId, key])
-                );
-            }
-
-            await Promise.all(updates);
+            await AdminSettingsRepository.updatePricing(pricing_data, adminId);
 
             res.status(200).json({
                 status: true,

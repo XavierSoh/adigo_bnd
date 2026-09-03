@@ -256,6 +256,32 @@ export class SocketService {
                 }
             );
 
+            // ============================================
+            // VTC — live tracking / dispatch rooms
+            // ============================================
+
+            // A customer (watching their own ride) or an admin (auditing a
+            // ride from the desktop) joins this ride's room to receive its
+            // GPS points and status changes as they happen.
+            socket.on('join_vtc_ride', (rideId: number) => {
+                socket.join(`vtc_ride_${rideId}`);
+            });
+
+            socket.on('leave_vtc_ride', (rideId: number) => {
+                socket.leave(`vtc_ride_${rideId}`);
+            });
+
+            // The admin desktop's dispatch/live-map screen joins this once to
+            // see every new ride request, status change, and driver position
+            // across all rides, without joining each one individually.
+            socket.on('join_vtc_dispatch', () => {
+                socket.join('vtc_dispatch');
+            });
+
+            socket.on('leave_vtc_dispatch', () => {
+                socket.leave('vtc_dispatch');
+            });
+
             // Déconnexion
             socket.on('disconnect', () => {
                 if (socket.data.user_id) {
@@ -407,6 +433,45 @@ export class SocketService {
      */
     static getIO(): Server {
         return this.io;
+    }
+
+    // ============================================
+    // VTC — live tracking / dispatch broadcasts
+    // ============================================
+
+    /**
+     * Broadcast one GPS point to a ride's own room (customer tracking screen)
+     * and to 'vtc_dispatch' (admin desktop live map watching every ride at
+     * once) — one write, both audiences updated.
+     */
+    static broadcastDriverLocation(rideId: number, point: unknown): void {
+        const event = {
+            event: 'driver_location',
+            data: { rideId, point },
+            timestamp: new Date().toISOString(),
+        };
+        this.io.to(`vtc_ride_${rideId}`).emit('driver_location', event);
+        this.io.to('vtc_dispatch').emit('driver_location', event);
+    }
+
+    /** Broadcast a ride's status change (accepted/arrived/started/completed/cancelled). */
+    static broadcastRideStatusChanged(ride: { id: number | string; status: string }): void {
+        const event = {
+            event: 'ride_status_changed',
+            data: ride,
+            timestamp: new Date().toISOString(),
+        };
+        this.io.to(`vtc_ride_${ride.id}`).emit('ride_status_changed', event);
+        this.io.to('vtc_dispatch').emit('ride_status_changed', event);
+    }
+
+    /** Tell every admin dispatch screen a new ride is waiting for a driver. */
+    static broadcastNewRideRequested(ride: unknown): void {
+        this.io.to('vtc_dispatch').emit('new_ride_requested', {
+            event: 'new_ride_requested',
+            data: ride,
+            timestamp: new Date().toISOString(),
+        });
     }
 
     /**

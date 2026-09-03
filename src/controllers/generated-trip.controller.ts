@@ -118,13 +118,18 @@ export class GeneratedTripController {
     // Get all with filters
     static async getAll(req: Request, res: Response): Promise<void> {
         try {
-            const { trip_id, status, agency_id, with_details } = req.query;
- 
+            const { trip_id, status, agency_id, with_details, start_date, end_date, limit, offset } = req.query;
+
             let result;
 
             if (with_details === 'true') {
                 result = await GeneratedTripRepository.findAllWithDetails(
-                    agency_id ? parseInt(agency_id as string) : undefined
+                    agency_id ? parseInt(agency_id as string) : undefined,
+                    status as string | undefined,
+                    start_date ? new Date(start_date as string) : undefined,
+                    end_date ? new Date(end_date as string) : undefined,
+                    limit ? parseInt(limit as string) : undefined,
+                    offset ? parseInt(offset as string) : undefined
                 );
             } else if (trip_id) {
                 result = await GeneratedTripRepository.findByTrip(parseInt(trip_id as string));

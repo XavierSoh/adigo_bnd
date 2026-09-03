@@ -1,4 +1,6 @@
-import pgpDb from "../../config/pgdb";
+// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
+// shim in ../../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
+import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../../utils/prisma-compat";
 import { EventFavorite, EventFavoriteCreateDto } from "../models/event-favorite.model";
 import ResponseModel from "../../models/response.model";
 import { kEventFavorite, kEvent, kCustomer, kEventCategory } from "../../utils/table_names";
@@ -38,7 +40,7 @@ export class EventFavoriteRepository {
     static async create(favorite: EventFavoriteCreateDto): Promise<ResponseModel> {
         try {
             // Check if already favorited
-            const existing = await pgpDb.oneOrNone(
+            const existing = await pgOneOrNone(
                 `SELECT id FROM ${kEventFavorite}
                 WHERE customer_id = $1 AND event_id = $2`,
                 [favorite.customer_id, favorite.event_id]
@@ -48,7 +50,7 @@ export class EventFavoriteRepository {
                 return { status: false, message: "Événement déjà ajouté aux favoris", code: 409 };
             }
 
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `INSERT INTO ${kEventFavorite} (customer_id, event_id, created_at)
                 VALUES ($1, $2, NOW())
                 RETURNING *`,
@@ -65,7 +67,7 @@ export class EventFavoriteRepository {
     // Remove favorite
     static async remove(customerId: number, eventId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventFavorite}
                 WHERE customer_id = $1 AND event_id = $2`,
                 [customerId, eventId]
@@ -84,7 +86,7 @@ export class EventFavoriteRepository {
     // Toggle favorite (add if not exists, remove if exists)
     static async toggle(customerId: number, eventId: number): Promise<ResponseModel> {
         try {
-            const existing = await pgpDb.oneOrNone(
+            const existing = await pgOneOrNone(
                 `SELECT id FROM ${kEventFavorite}
                 WHERE customer_id = $1 AND event_id = $2`,
                 [customerId, eventId]
@@ -92,7 +94,7 @@ export class EventFavoriteRepository {
 
             if (existing) {
                 // Remove favorite
-                await pgpDb.none(
+                await pgNone(
                     `DELETE FROM ${kEventFavorite}
                     WHERE customer_id = $1 AND event_id = $2`,
                     [customerId, eventId]
@@ -101,7 +103,7 @@ export class EventFavoriteRepository {
                 return { status: true, message: "Événement retiré des favoris", body: { is_favorited: false }, code: 200 };
             } else {
                 // Add favorite
-                const result = await pgpDb.one(
+                const result = await pgOne(
                     `INSERT INTO ${kEventFavorite} (customer_id, event_id, created_at)
                     VALUES ($1, $2, NOW())
                     RETURNING *`,
@@ -118,7 +120,7 @@ export class EventFavoriteRepository {
     // Find by customer
     static async findByCustomer(customerId: number): Promise<ResponseModel> {
         try {
-            const favorites = await pgpDb.any(
+            const favorites = await pgAny(
                 `SELECT ${this.BASE_SELECT}
                 ${this.BASE_JOINS}
                 WHERE f.customer_id = $1 AND e.is_deleted = FALSE
@@ -135,7 +137,7 @@ export class EventFavoriteRepository {
     // Find by event (all customers who favorited this event)
     static async findByEvent(eventId: number): Promise<ResponseModel> {
         try {
-            const favorites = await pgpDb.any(
+            const favorites = await pgAny(
                 `SELECT
                     f.*,
                     json_build_object(
@@ -161,7 +163,7 @@ export class EventFavoriteRepository {
     // Check if event is favorited by customer
     static async isFavorited(customerId: number, eventId: number): Promise<ResponseModel> {
         try {
-            const favorite = await pgpDb.oneOrNone(
+            const favorite = await pgOneOrNone(
                 `SELECT id FROM ${kEventFavorite}
                 WHERE customer_id = $1 AND event_id = $2`,
                 [customerId, eventId]
@@ -183,7 +185,7 @@ export class EventFavoriteRepository {
     // Get favorite count for event
     static async getCountByEvent(eventId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.one(
+            const result = await pgOne(
                 `SELECT COUNT(*) as favorite_count
                 FROM ${kEventFavorite}
                 WHERE event_id = $1`,
@@ -199,7 +201,7 @@ export class EventFavoriteRepository {
     // Get most favorited events
     static async getMostFavorited(limit: number = 10): Promise<ResponseModel> {
         try {
-            const events = await pgpDb.any(
+            const events = await pgAny(
                 `SELECT
                     e.id,
                     e.title,
@@ -242,7 +244,7 @@ export class EventFavoriteRepository {
                 params.push(customerId);
             }
 
-            const stats = await pgpDb.one(query, params);
+            const stats = await pgOne(query, params);
 
             return { status: true, message: "Statistiques récupérées", body: stats, code: 200 };
         } catch (error) {
@@ -253,7 +255,7 @@ export class EventFavoriteRepository {
     // Remove all favorites for customer
     static async removeAllByCustomer(customerId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventFavorite} WHERE customer_id = $1`,
                 [customerId]
             );
@@ -272,7 +274,7 @@ export class EventFavoriteRepository {
     // Remove all favorites for event
     static async removeAllByEvent(eventId: number): Promise<ResponseModel> {
         try {
-            const result = await pgpDb.result(
+            const result = await pgResult(
                 `DELETE FROM ${kEventFavorite} WHERE event_id = $1`,
                 [eventId]
             );
