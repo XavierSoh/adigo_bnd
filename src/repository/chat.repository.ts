@@ -1,12 +1,8 @@
-// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
-// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
-import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../utils/prisma-compat";
-import {
-    kConversations,
-    kMessages,
-    kQuickReplies,
-    kAIResponses,
-} from "../config/chat_tables";
+// Migrated to Prisma's native model API (prisma.conversations.*,
+// prisma.messages.*, prisma.quick_replies.*, prisma.ai_responses.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration", tier 4).
+import { Prisma } from "@prisma/client";
+import prismaDb from "../config/prismaClient";
 import {
     Conversation,
     Message,
@@ -22,6 +18,42 @@ import {
     AIIntent,
 } from "../models/chat.model";
 
+const conversationWithJoins = {
+    customer: { select: { first_name: true, last_name: true } },
+    users_conversations_assigned_toTousers: { select: { login: true } },
+    _count: { select: { messages: { where: { is_deleted: false } } } },
+} satisfies Prisma.conversationsInclude;
+
+type ConversationRow = Prisma.conversationsGetPayload<{ include: typeof conversationWithJoins }>;
+
+function mapConversation(row: ConversationRow): Conversation {
+    const { customer, users_conversations_assigned_toTousers, _count, ...rest } = row;
+    return {
+        ...rest,
+        customer_name: `${customer.first_name} ${customer.last_name}`,
+        admin_name: users_conversations_assigned_toTousers?.login,
+        message_count: _count.messages,
+    } as unknown as Conversation;
+}
+
+// getOpenConversations' original SQL never LEFT JOINs users at all (every
+// row it returns has assigned_to IS NULL by definition of the WHERE
+// clause) — no `admin_name` key at all in that shape, unlike every other
+// list method here. Reproduced with a narrower include/mapper.
+const openConversationWithJoins = {
+    customer: { select: { first_name: true, last_name: true } },
+    _count: { select: { messages: { where: { is_deleted: false } } } },
+} satisfies Prisma.conversationsInclude;
+
+function mapOpenConversation(row: Prisma.conversationsGetPayload<{ include: typeof openConversationWithJoins }>): Conversation {
+    const { customer, _count, ...rest } = row;
+    return {
+        ...rest,
+        customer_name: `${customer.first_name} ${customer.last_name}`,
+        message_count: _count.messages,
+    } as unknown as Conversation;
+}
+
 export class ChatRepository {
     // ============================================
     // CONVERSATIONS
@@ -33,13 +65,14 @@ export class ChatRepository {
     static async createConversation(data: CreateConversationDTO): Promise<Conversation> {
         const { customer_id, subject, tags, initial_message } = data;
 
-        const conversation = await pgOne<Conversation>(
-            `INSERT INTO ${kConversations} (
-                customer_id, subject, tags, status
-            ) VALUES ($1, $2, $3, $4)
-            RETURNING *`,
-            [customer_id, subject || null, tags || null, 'open']
-        );
+        const conversation = await prismaDb.conversations.create({
+            data: {
+                customer_id,
+                subject: subject || null,
+                tags: tags || undefined,
+                status: 'open',
+            },
+        });
 
         // Si un message initial est fourni, le créer
         if (initial_message) {
@@ -52,7 +85,7 @@ export class ChatRepository {
             });
         }
 
-        return conversation;
+        return conversation as unknown as Conversation;
     }
 
     /**
@@ -60,20 +93,11 @@ export class ChatRepository {
      */
     static async getConversationById(id: number): Promise<Conversation | null> {
         try {
-            const conversation = await pgOne<Conversation>(
-                `SELECT c.*,
-                    CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
-                    u.login as admin_name,
-                    COUNT(m.id) as message_count
-                FROM ${kConversations} c
-                LEFT JOIN customer cust ON c.customer_id = cust.id
-                LEFT JOIN "users" u ON c.assigned_to = u.id
-                LEFT JOIN ${kMessages} m ON c.id = m.conversation_id AND m.is_deleted = FALSE
-                WHERE c.id = $1 AND c.is_deleted = FALSE
-                GROUP BY c.id, cust.first_name, cust.last_name, u.login`,
-                [id]
-            );
-            return conversation;
+            const row = await prismaDb.conversations.findFirst({
+                where: { id, is_deleted: false },
+                include: conversationWithJoins,
+            });
+            return row ? mapConversation(row) : null;
         } catch {
             return null;
         }
@@ -86,23 +110,12 @@ export class ChatRepository {
         customerId: number,
         status?: ConversationStatus
     ): Promise<Conversation[]> {
-        const statusFilter = status ? 'AND c.status = $2' : '';
-        const params = status ? [customerId, status] : [customerId];
-
-        return await pgAny<Conversation>(
-            `SELECT c.*,
-                CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
-                u.login as admin_name,
-                COUNT(m.id) as message_count
-            FROM ${kConversations} c
-            LEFT JOIN customer cust ON c.customer_id = cust.id
-            LEFT JOIN "users" u ON c.assigned_to = u.id
-            LEFT JOIN ${kMessages} m ON c.id = m.conversation_id AND m.is_deleted = FALSE
-            WHERE c.customer_id = $1 AND c.is_deleted = FALSE ${statusFilter}
-            GROUP BY c.id, cust.first_name, cust.last_name, u.login
-            ORDER BY c.last_message_at DESC`,
-            params
-        );
+        const rows = await prismaDb.conversations.findMany({
+            where: { customer_id: customerId, is_deleted: false, ...(status ? { status } : {}) },
+            include: conversationWithJoins,
+            orderBy: { last_message_at: 'desc' },
+        });
+        return rows.map(mapConversation);
     }
 
     /**
@@ -112,42 +125,24 @@ export class ChatRepository {
         adminId: number,
         status?: ConversationStatus
     ): Promise<Conversation[]> {
-        const statusFilter = status ? 'AND c.status = $2' : '';
-        const params = status ? [adminId, status] : [adminId];
-
-        return await pgAny<Conversation>(
-            `SELECT c.*,
-                CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
-                u.login as admin_name,
-                COUNT(m.id) as message_count
-            FROM ${kConversations} c
-            LEFT JOIN customer cust ON c.customer_id = cust.id
-            LEFT JOIN "users" u ON c.assigned_to = u.id
-            LEFT JOIN ${kMessages} m ON c.id = m.conversation_id AND m.is_deleted = FALSE
-            WHERE c.assigned_to = $1 AND c.is_deleted = FALSE ${statusFilter}
-            GROUP BY c.id, cust.first_name, cust.last_name, u.login
-            ORDER BY c.last_message_at DESC`,
-            params
-        );
+        const rows = await prismaDb.conversations.findMany({
+            where: { assigned_to: adminId, is_deleted: false, ...(status ? { status } : {}) },
+            include: conversationWithJoins,
+            orderBy: { last_message_at: 'desc' },
+        });
+        return rows.map(mapConversation);
     }
 
     /**
      * Récupérer toutes les conversations ouvertes (non assignées)
      */
     static async getOpenConversations(): Promise<Conversation[]> {
-        return await pgAny<Conversation>(
-            `SELECT c.*,
-                CONCAT(cust.first_name, ' ', cust.last_name) as customer_name,
-                COUNT(m.id) as message_count
-            FROM ${kConversations} c
-            LEFT JOIN customer cust ON c.customer_id = cust.id
-            LEFT JOIN ${kMessages} m ON c.id = m.conversation_id AND m.is_deleted = FALSE
-            WHERE c.assigned_to IS NULL
-              AND c.status = 'open'
-              AND c.is_deleted = FALSE
-            GROUP BY c.id, cust.first_name, cust.last_name
-            ORDER BY c.priority DESC, c.created_at ASC`
-        );
+        const rows = await prismaDb.conversations.findMany({
+            where: { assigned_to: null, status: 'open', is_deleted: false },
+            include: openConversationWithJoins,
+            orderBy: [{ priority: 'desc' }, { created_at: 'asc' }],
+        });
+        return rows.map(mapOpenConversation);
     }
 
     /**
@@ -157,53 +152,28 @@ export class ChatRepository {
         id: number,
         data: UpdateConversationDTO
     ): Promise<Conversation | null> {
-        const fields: string[] = [];
-        const values: any[] = [];
-        let paramIndex = 1;
+        const update: Prisma.conversationsUncheckedUpdateInput = { updated_at: new Date() };
+        let hasField = false;
 
         if (data.status !== undefined) {
-            fields.push(`status = $${paramIndex++}`);
-            values.push(data.status);
-
+            update.status = data.status;
+            hasField = true;
             // Si fermée, définir closed_at
             if (data.status === 'closed') {
-                fields.push(`closed_at = CURRENT_TIMESTAMP`);
+                update.closed_at = new Date();
             }
         }
+        if (data.priority !== undefined) { update.priority = data.priority; hasField = true; }
+        if (data.assigned_to !== undefined) { update.assigned_to = data.assigned_to; hasField = true; }
+        if (data.subject !== undefined) { update.subject = data.subject; hasField = true; }
+        if (data.tags !== undefined) { update.tags = data.tags; hasField = true; }
 
-        if (data.priority !== undefined) {
-            fields.push(`priority = $${paramIndex++}`);
-            values.push(data.priority);
-        }
-
-        if (data.assigned_to !== undefined) {
-            fields.push(`assigned_to = $${paramIndex++}`);
-            values.push(data.assigned_to);
-        }
-
-        if (data.subject !== undefined) {
-            fields.push(`subject = $${paramIndex++}`);
-            values.push(data.subject);
-        }
-
-        if (data.tags !== undefined) {
-            fields.push(`tags = $${paramIndex++}`);
-            values.push(data.tags);
-        }
-
-        if (fields.length === 0) return null;
-
-        fields.push(`updated_at = CURRENT_TIMESTAMP`);
-        values.push(id);
+        if (!hasField) return null;
 
         try {
-            return await pgOne<Conversation>(
-                `UPDATE ${kConversations}
-                SET ${fields.join(', ')}
-                WHERE id = $${paramIndex} AND is_deleted = FALSE
-                RETURNING *`,
-                values
-            );
+            const result = await prismaDb.conversations.updateMany({ where: { id, is_deleted: false }, data: update });
+            if (result.count === 0) return null;
+            return await prismaDb.conversations.findUnique({ where: { id } }) as unknown as Conversation;
         } catch {
             return null;
         }
@@ -216,26 +186,22 @@ export class ChatRepository {
         conversationId: number,
         adminId: number
     ): Promise<boolean> {
-        const result = await pgResult(
-            `UPDATE ${kConversations}
-            SET assigned_to = $1, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $2 AND is_deleted = FALSE`,
-            [adminId, conversationId]
-        );
-        return result.rowCount > 0;
+        const result = await prismaDb.conversations.updateMany({
+            where: { id: conversationId, is_deleted: false },
+            data: { assigned_to: adminId, updated_at: new Date() },
+        });
+        return result.count > 0;
     }
 
     /**
      * Supprimer une conversation (soft delete)
      */
     static async deleteConversation(id: number, deletedBy: number): Promise<boolean> {
-        const result = await pgResult(
-            `UPDATE ${kConversations}
-            SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP, deleted_by = $1
-            WHERE id = $2`,
-            [deletedBy, id]
-        );
-        return result.rowCount > 0;
+        const result = await prismaDb.conversations.updateMany({
+            where: { id },
+            data: { is_deleted: true, deleted_at: new Date(), deleted_by: deletedBy },
+        });
+        return result.count > 0;
     }
 
     // ============================================
@@ -256,36 +222,35 @@ export class ChatRepository {
             metadata,
         } = data;
 
-        const message = await pgOne<Message>(
-            `INSERT INTO ${kMessages} (
-                conversation_id, sender_type, sender_id, sender_name,
-                message_type, content, metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING *`,
-            [
+        const message = await prismaDb.messages.create({
+            data: {
                 conversation_id,
                 sender_type,
-                sender_id || null,
-                sender_name || null,
+                sender_id: sender_id || null,
+                sender_name: sender_name || null,
                 message_type,
                 content,
-                metadata ? JSON.stringify(metadata) : null,
-            ]
-        );
+                metadata: metadata ?? undefined,
+            },
+        });
 
-        // Mettre à jour la conversation
-        await pgNone(
-            `UPDATE ${kConversations}
-            SET last_message_at = CURRENT_TIMESTAMP,
-                last_message_preview = $1,
-                updated_at = CURRENT_TIMESTAMP,
-                unread_count_${sender_type === 'customer' ? 'admin' : 'customer'} =
-                    unread_count_${sender_type === 'customer' ? 'admin' : 'customer'} + 1
-            WHERE id = $2`,
-            [content.substring(0, 100), conversation_id]
-        );
+        // Mettre à jour la conversation — `unread_count_<admin|customer>`
+        // is a DYNAMIC column name based on who sent the message (the
+        // OTHER side's unread counter goes up); reproduced by branching in
+        // JS onto the two real, statically-named fields.
+        await prismaDb.conversations.updateMany({
+            where: { id: conversation_id },
+            data: {
+                last_message_at: new Date(),
+                last_message_preview: content.substring(0, 100),
+                updated_at: new Date(),
+                ...(sender_type === 'customer'
+                    ? { unread_count_admin: { increment: 1 } }
+                    : { unread_count_customer: { increment: 1 } }),
+            },
+        });
 
-        return message;
+        return message as unknown as Message;
     }
 
     /**
@@ -296,16 +261,13 @@ export class ChatRepository {
         limit?: number,
         offset?: number
     ): Promise<Message[]> {
-        const limitClause = limit ? `LIMIT ${limit}` : '';
-        const offsetClause = offset ? `OFFSET ${offset}` : '';
-
-        return await pgAny<Message>(
-            `SELECT * FROM ${kMessages}
-            WHERE conversation_id = $1 AND is_deleted = FALSE
-            ORDER BY created_at ASC
-            ${limitClause} ${offsetClause}`,
-            [conversationId]
-        );
+        const rows = await prismaDb.messages.findMany({
+            where: { conversation_id: conversationId, is_deleted: false },
+            orderBy: { created_at: 'asc' },
+            ...(limit ? { take: limit } : {}),
+            ...(offset ? { skip: offset } : {}),
+        });
+        return rows as unknown as Message[];
     }
 
     /**
@@ -329,13 +291,11 @@ export class ChatRepository {
      * Marquer un message comme lu
      */
     static async markMessageAsRead(messageId: number): Promise<boolean> {
-        const result = await pgResult(
-            `UPDATE ${kMessages}
-            SET is_read = TRUE, read_at = CURRENT_TIMESTAMP
-            WHERE id = $1 AND is_read = FALSE`,
-            [messageId]
-        );
-        return result.rowCount > 0;
+        const result = await prismaDb.messages.updateMany({
+            where: { id: messageId, is_read: false },
+            data: { is_read: true, read_at: new Date() },
+        });
+        return result.count > 0;
     }
 
     /**
@@ -346,38 +306,30 @@ export class ChatRepository {
         forUser: 'customer' | 'admin'
     ): Promise<number> {
         // Marquer les messages comme lus
-        await pgNone(
-            `UPDATE ${kMessages}
-            SET is_read = TRUE, read_at = CURRENT_TIMESTAMP
-            WHERE conversation_id = $1
-              AND sender_type != $2
-              AND is_read = FALSE`,
-            [conversationId, forUser]
-        );
+        await prismaDb.messages.updateMany({
+            where: { conversation_id: conversationId, sender_type: { not: forUser }, is_read: false },
+            data: { is_read: true, read_at: new Date() },
+        });
 
-        // Réinitialiser le compteur de non-lus
-        const field = forUser === 'customer' ? 'unread_count_customer' : 'unread_count_admin';
-        const result = await pgResult(
-            `UPDATE ${kConversations}
-            SET ${field} = 0
-            WHERE id = $1`,
-            [conversationId]
-        );
+        // Réinitialiser le compteur de non-lus — dynamic column name in
+        // the original, reproduced by branching onto the 2 real fields.
+        const result = await prismaDb.conversations.updateMany({
+            where: { id: conversationId },
+            data: forUser === 'customer' ? { unread_count_customer: 0 } : { unread_count_admin: 0 },
+        });
 
-        return result.rowCount;
+        return result.count;
     }
 
     /**
      * Supprimer un message (soft delete)
      */
     static async deleteMessage(id: number): Promise<boolean> {
-        const result = await pgResult(
-            `UPDATE ${kMessages}
-            SET is_deleted = TRUE, deleted_at = CURRENT_TIMESTAMP
-            WHERE id = $1`,
-            [id]
-        );
-        return result.rowCount > 0;
+        const result = await prismaDb.messages.updateMany({
+            where: { id },
+            data: { is_deleted: true, deleted_at: new Date() },
+        });
+        return result.count > 0;
     }
 
     /**
@@ -392,42 +344,18 @@ export class ChatRepository {
             ai_intent?: AIIntent;
         }
     ): Promise<boolean> {
-        const fields: string[] = [];
-        const values: any[] = [];
-        let paramIndex = 1;
+        const update: Prisma.messagesUncheckedUpdateInput = {};
+        let hasField = false;
 
-        if (aiData.ai_processed !== undefined) {
-            fields.push(`ai_processed = $${paramIndex++}`);
-            values.push(aiData.ai_processed);
-        }
+        if (aiData.ai_processed !== undefined) { update.ai_processed = aiData.ai_processed; hasField = true; }
+        if (aiData.ai_suggested_response !== undefined) { update.ai_suggested_response = aiData.ai_suggested_response; hasField = true; }
+        if (aiData.ai_confidence !== undefined) { update.ai_confidence = aiData.ai_confidence; hasField = true; }
+        if (aiData.ai_intent !== undefined) { update.ai_intent = aiData.ai_intent; hasField = true; }
 
-        if (aiData.ai_suggested_response !== undefined) {
-            fields.push(`ai_suggested_response = $${paramIndex++}`);
-            values.push(aiData.ai_suggested_response);
-        }
+        if (!hasField) return false;
 
-        if (aiData.ai_confidence !== undefined) {
-            fields.push(`ai_confidence = $${paramIndex++}`);
-            values.push(aiData.ai_confidence);
-        }
-
-        if (aiData.ai_intent !== undefined) {
-            fields.push(`ai_intent = $${paramIndex++}`);
-            values.push(aiData.ai_intent);
-        }
-
-        if (fields.length === 0) return false;
-
-        values.push(messageId);
-
-        const result = await pgResult(
-            `UPDATE ${kMessages}
-            SET ${fields.join(', ')}
-            WHERE id = $${paramIndex}`,
-            values
-        );
-
-        return result.rowCount > 0;
+        const result = await prismaDb.messages.updateMany({ where: { id: messageId }, data: update });
+        return result.count > 0;
     }
 
     // ============================================
@@ -450,41 +378,34 @@ export class ChatRepository {
             created_by,
         } = data;
 
-        return await pgOne<QuickReply>(
-            `INSERT INTO ${kQuickReplies} (
-                title, action_type, payload, icon, color, display_order,
-                requires_auth, user_role, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING *`,
-            [
+        const result = await prismaDb.quick_replies.create({
+            data: {
                 title,
                 action_type,
-                JSON.stringify(payload),
-                icon || null,
-                color || null,
-                display_order || 0,
-                requires_auth || false,
-                user_role || null,
+                payload,
+                icon: icon || null,
+                color: color || null,
+                display_order: display_order || 0,
+                requires_auth: requires_auth || false,
+                user_role: user_role || null,
                 created_by,
-            ]
-        );
+            },
+        });
+        return result as unknown as QuickReply;
     }
 
     /**
      * Récupérer tous les quick replies actifs
      */
     static async getActiveQuickReplies(userRole?: 'customer' | 'admin'): Promise<QuickReply[]> {
-        const roleFilter = userRole
-            ? `AND (user_role IS NULL OR user_role = $1)`
-            : '';
-        const params = userRole ? [userRole] : [];
-
-        return await pgAny<QuickReply>(
-            `SELECT * FROM ${kQuickReplies}
-            WHERE is_active = TRUE ${roleFilter}
-            ORDER BY display_order ASC, created_at ASC`,
-            params
-        );
+        const rows = await prismaDb.quick_replies.findMany({
+            where: {
+                is_active: true,
+                ...(userRole ? { OR: [{ user_role: null }, { user_role: userRole }] } : {}),
+            },
+            orderBy: [{ display_order: 'asc' }, { created_at: 'asc' }],
+        });
+        return rows as unknown as QuickReply[];
     }
 
     /**
@@ -492,10 +413,8 @@ export class ChatRepository {
      */
     static async getQuickReplyById(id: number): Promise<QuickReply | null> {
         try {
-            return await pgOne<QuickReply>(
-                `SELECT * FROM ${kQuickReplies} WHERE id = $1`,
-                [id]
-            );
+            const result = await prismaDb.quick_replies.findUnique({ where: { id } });
+            return result as unknown as QuickReply | null;
         } catch {
             return null;
         }
@@ -507,12 +426,11 @@ export class ChatRepository {
     static async getQuickRepliesByIds(ids: number[]): Promise<QuickReply[]> {
         if (ids.length === 0) return [];
 
-        return await pgAny<QuickReply>(
-            `SELECT * FROM ${kQuickReplies}
-            WHERE id = ANY($1) AND is_active = TRUE
-            ORDER BY display_order ASC`,
-            [ids]
-        );
+        const rows = await prismaDb.quick_replies.findMany({
+            where: { id: { in: ids }, is_active: true },
+            orderBy: { display_order: 'asc' },
+        });
+        return rows as unknown as QuickReply[];
     }
 
     // ============================================
@@ -538,64 +456,56 @@ export class ChatRepository {
             created_by,
         } = data;
 
-        return await pgOne<AIResponse>(
-            `INSERT INTO ${kAIResponses} (
-                intent, keywords, pattern, response_template, response_type, language,
-                quick_reply_ids, priority, confidence_threshold,
-                trigger_on_first_message, max_uses_per_conversation, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            RETURNING *`,
-            [
+        const result = await prismaDb.ai_responses.create({
+            data: {
                 intent,
                 keywords,
-                pattern || null,
+                pattern: pattern || null,
                 response_template,
-                response_type || 'text',
-                language || 'en',
-                quick_reply_ids || null,
-                priority || 0,
-                confidence_threshold || 0.7,
-                trigger_on_first_message || false,
-                max_uses_per_conversation || null,
+                response_type: response_type || 'text',
+                language: language || 'en',
+                quick_reply_ids: quick_reply_ids || undefined,
+                priority: priority || 0,
+                confidence_threshold: confidence_threshold ?? 0.7,
+                trigger_on_first_message: trigger_on_first_message || false,
+                max_uses_per_conversation: max_uses_per_conversation || null,
                 created_by,
-            ]
-        );
+            },
+        });
+        return result as unknown as AIResponse;
     }
 
     /**
      * Récupérer toutes les réponses IA actives
      */
     static async getActiveAIResponses(): Promise<AIResponse[]> {
-        return await pgAny<AIResponse>(
-            `SELECT * FROM ${kAIResponses}
-            WHERE is_active = TRUE
-            ORDER BY priority DESC, created_at ASC`
-        );
+        const rows = await prismaDb.ai_responses.findMany({
+            where: { is_active: true },
+            orderBy: [{ priority: 'desc' }, { created_at: 'asc' }],
+        });
+        return rows as unknown as AIResponse[];
     }
 
     /**
      * Récupérer les réponses IA par intent
      */
     static async getAIResponsesByIntent(intent: AIIntent): Promise<AIResponse[]> {
-        return await pgAny<AIResponse>(
-            `SELECT * FROM ${kAIResponses}
-            WHERE intent = $1 AND is_active = TRUE
-            ORDER BY priority DESC`,
-            [intent]
-        );
+        const rows = await prismaDb.ai_responses.findMany({
+            where: { intent, is_active: true },
+            orderBy: { priority: 'desc' },
+        });
+        return rows as unknown as AIResponse[];
     }
 
     /**
      * Incrémenter le compteur d'utilisation d'une réponse IA
      */
     static async incrementAIResponseUsage(id: number): Promise<boolean> {
-        const result = await pgResult(
-            `UPDATE ${kAIResponses}
-            SET usage_count = usage_count + 1
-            WHERE id = $1`,
-            [id]
-        );
-        return result.rowCount > 0;
+        const result = await prismaDb.ai_responses.updateMany({
+            where: { id },
+            data: { usage_count: { increment: 1 } },
+        });
+        return result.count > 0;
     }
 
     // ============================================
@@ -606,30 +516,36 @@ export class ChatRepository {
      * Récupérer les statistiques générales du chat
      */
     static async getChatStatistics() {
-        const stats = await pgOne(
-            `SELECT
-                COUNT(*) as total_conversations,
-                COUNT(*) FILTER (WHERE status = 'open') as open_conversations,
-                COUNT(*) FILTER (WHERE status = 'pending') as pending_conversations,
-                COUNT(*) FILTER (WHERE status = 'closed') as closed_conversations,
-                COUNT(*) FILTER (WHERE assigned_to IS NULL) as unassigned_conversations,
-                AVG(unread_count_admin) as avg_unread_admin,
-                AVG(unread_count_customer) as avg_unread_customer
-            FROM ${kConversations}
-            WHERE is_deleted = FALSE`
-        );
+        // `COUNT(*) FILTER (WHERE ...)` per status/flag — parallel
+        // `.count()` calls; `AVG(...)` via `.aggregate()`.
+        const convWhere = { is_deleted: false } as const;
+        const [
+            total_conversations, open_conversations, pending_conversations, closed_conversations,
+            unassigned_conversations, unreadAgg,
+        ] = await Promise.all([
+            prismaDb.conversations.count({ where: convWhere }),
+            prismaDb.conversations.count({ where: { ...convWhere, status: 'open' } }),
+            prismaDb.conversations.count({ where: { ...convWhere, status: 'pending' } }),
+            prismaDb.conversations.count({ where: { ...convWhere, status: 'closed' } }),
+            prismaDb.conversations.count({ where: { ...convWhere, assigned_to: null } }),
+            prismaDb.conversations.aggregate({ where: convWhere, _avg: { unread_count_admin: true, unread_count_customer: true } }),
+        ]);
 
-        const messageStats = await pgOne(
-            `SELECT
-                COUNT(*) as total_messages,
-                COUNT(*) FILTER (WHERE sender_type = 'customer') as customer_messages,
-                COUNT(*) FILTER (WHERE sender_type = 'admin') as admin_messages,
-                COUNT(*) FILTER (WHERE sender_type = 'ai') as ai_messages,
-                COUNT(*) FILTER (WHERE ai_processed = TRUE) as ai_processed_messages
-            FROM ${kMessages}
-            WHERE is_deleted = FALSE`
-        );
+        const msgWhere = { is_deleted: false } as const;
+        const [total_messages, customer_messages, admin_messages, ai_messages, ai_processed_messages] = await Promise.all([
+            prismaDb.messages.count({ where: msgWhere }),
+            prismaDb.messages.count({ where: { ...msgWhere, sender_type: 'customer' } }),
+            prismaDb.messages.count({ where: { ...msgWhere, sender_type: 'admin' } }),
+            prismaDb.messages.count({ where: { ...msgWhere, sender_type: 'ai' } }),
+            prismaDb.messages.count({ where: { ...msgWhere, ai_processed: true } }),
+        ]);
 
-        return { ...stats, ...messageStats };
+        return {
+            total_conversations, open_conversations, pending_conversations, closed_conversations,
+            unassigned_conversations,
+            avg_unread_admin: unreadAgg._avg.unread_count_admin ?? 0,
+            avg_unread_customer: unreadAgg._avg.unread_count_customer ?? 0,
+            total_messages, customer_messages, admin_messages, ai_messages, ai_processed_messages,
+        };
     }
 }
