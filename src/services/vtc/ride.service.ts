@@ -2,14 +2,13 @@
  * VTC Ride Service
  * Business logic for ride management
  *
- * Migrated to Prisma (see VTC_MODULE_PLAN.md) via the pg-promise-shaped
- * compat shim in prisma-compat.ts — same SQL text and $1,$2,... params as
- * before, only the call site changed (`pool.one` -> `pgOne`, `pool.tx` ->
- * `pgTransaction` with the `tx` client passed as each helper's 3rd arg), to
- * minimize the chance of a transcription mistake on this file.
+ * Migrated to Prisma's native model API (prisma.vtc_rides.*) — see
+ * BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration",
+ * tier 4) and VTC_MODULE_PLAN.md.
  */
 
-import { pgOne, pgAny, pgOneOrNone, pgNone, pgTransaction } from '../../utils/prisma-compat';
+import { Prisma } from '@prisma/client';
+import prismaDb from '../../config/prismaClient';
 import {
   VtcRide,
   CreateRideDto,
@@ -18,6 +17,24 @@ import {
   CancelRideDto,
   RIDE_STATUS_TRANSITIONS
 } from '../../models/vtc/ride.model';
+
+const rideWithJoins = {
+  vtc_drivers: { select: { first_name: true, last_name: true, phone: true } },
+  customer: { select: { first_name: true, last_name: true, phone: true } },
+} satisfies Prisma.vtc_ridesInclude;
+
+function mapRide<T extends { vtc_drivers: { first_name: string; last_name: string; phone: string } | null; customer: { first_name: string; last_name: string; phone: string } }>(row: T) {
+  const { vtc_drivers, customer, ...rest } = row;
+  return {
+    ...rest,
+    driver_first_name: vtc_drivers?.first_name ?? null,
+    driver_last_name: vtc_drivers?.last_name ?? null,
+    driver_phone: vtc_drivers?.phone ?? null,
+    customer_first_name: customer.first_name,
+    customer_last_name: customer.last_name,
+    customer_phone: customer.phone,
+  };
+}
 
 export class RideService {
   private readonly BASE_FARE_ECONOMY = 500; // FCFA
@@ -100,29 +117,29 @@ export class RideService {
       data.vehicleType
     );
 
-    const query = `
-      INSERT INTO vtc_rides (
-        customer_id, vehicle_type,
-        pickup_address, pickup_latitude, pickup_longitude,
-        dropoff_address, dropoff_latitude, dropoff_longitude,
-        base_fare, distance_fare, time_fare, surge_multiplier, total_fare,
-        estimated_distance, estimated_duration,
-        payment_method, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-      RETURNING *
-    `;
+    const result = await prismaDb.vtc_rides.create({
+      data: {
+        customer_id: data.customerId,
+        vehicle_type: data.vehicleType,
+        pickup_address: data.pickupAddress,
+        pickup_latitude: data.pickupLatitude,
+        pickup_longitude: data.pickupLongitude,
+        dropoff_address: data.dropoffAddress,
+        dropoff_latitude: data.dropoffLatitude,
+        dropoff_longitude: data.dropoffLongitude,
+        base_fare: estimate.baseFare,
+        distance_fare: estimate.distanceFare,
+        time_fare: estimate.timeFare,
+        surge_multiplier: estimate.surgeMultiplier,
+        total_fare: estimate.totalFare,
+        estimated_distance: estimate.estimatedDistance,
+        estimated_duration: estimate.estimatedDuration,
+        payment_method: data.paymentMethod,
+        status: 'requested',
+      } as Prisma.vtc_ridesUncheckedCreateInput,
+    });
 
-    const values = [
-      data.customerId, data.vehicleType,
-      data.pickupAddress, data.pickupLatitude, data.pickupLongitude,
-      data.dropoffAddress, data.dropoffLatitude, data.dropoffLongitude,
-      estimate.baseFare, estimate.distanceFare, estimate.timeFare,
-      estimate.surgeMultiplier, estimate.totalFare,
-      estimate.estimatedDistance, estimate.estimatedDuration,
-      data.paymentMethod, 'requested'
-    ];
-
-    return pgOne(query, values);
+    return result as unknown as VtcRide;
   }
 
   /**
@@ -130,28 +147,19 @@ export class RideService {
    * both the customer-facing detail view and the admin ride detail screen.
    */
   async getRideById(rideId: number): Promise<VtcRide | null> {
-    return pgOneOrNone(
-      `SELECT r.*,
-              d.first_name AS driver_first_name, d.last_name AS driver_last_name, d.phone AS driver_phone,
-              c.first_name AS customer_first_name, c.last_name AS customer_last_name, c.phone AS customer_phone
-       FROM vtc_rides r
-       LEFT JOIN vtc_drivers d ON d.id = r.driver_id
-       LEFT JOIN customer c ON c.id = r.customer_id
-       WHERE r.id = $1`,
-      [rideId]
-    );
+    const row = await prismaDb.vtc_rides.findUnique({ where: { id: rideId }, include: rideWithJoins });
+    return row ? (mapRide(row) as unknown as VtcRide) : null;
   }
 
   /**
    * Get customer rides
    */
   async getCustomerRides(customerId: number): Promise<VtcRide[]> {
-    return pgAny(
-      `SELECT * FROM vtc_rides
-       WHERE customer_id = $1
-       ORDER BY created_at DESC`,
-      [customerId]
-    );
+    const rows = await prismaDb.vtc_rides.findMany({
+      where: { customer_id: customerId },
+      orderBy: { created_at: 'desc' },
+    });
+    return rows as unknown as VtcRide[];
   }
 
   /**
@@ -162,37 +170,20 @@ export class RideService {
    * with no way to identify who actually booked a ride.
    */
   async getAllRides(status?: string, customerId?: number, driverId?: number): Promise<VtcRide[]> {
-    const conditions: string[] = [];
-    const params: any[] = [];
+    const where: Prisma.vtc_ridesWhereInput = {};
+    if (status) where.status = status;
+    if (customerId) where.customer_id = customerId;
+    if (driverId) where.driver_id = driverId;
 
-    if (status) {
-      params.push(status);
-      conditions.push(`r.status = $${params.length}`);
-    }
-    if (customerId) {
-      params.push(customerId);
-      conditions.push(`r.customer_id = $${params.length}`);
-    }
-    if (driverId) {
-      params.push(driverId);
-      conditions.push(`r.driver_id = $${params.length}`);
-    }
+    const hasFilters = Object.keys(where).length > 0;
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    const limit = conditions.length ? '' : 'LIMIT 200';
-
-    return pgAny(
-      `SELECT r.*,
-              d.first_name AS driver_first_name, d.last_name AS driver_last_name, d.phone AS driver_phone,
-              c.first_name AS customer_first_name, c.last_name AS customer_last_name, c.phone AS customer_phone
-       FROM vtc_rides r
-       LEFT JOIN vtc_drivers d ON d.id = r.driver_id
-       LEFT JOIN customer c ON c.id = r.customer_id
-       ${where}
-       ORDER BY r.created_at DESC
-       ${limit}`,
-      params
-    );
+    const rows = await prismaDb.vtc_rides.findMany({
+      where,
+      include: rideWithJoins,
+      orderBy: { created_at: 'desc' },
+      ...(hasFilters ? {} : { take: 200 }),
+    });
+    return rows.map((r) => mapRide(r) as unknown as VtcRide);
   }
 
   /**
@@ -204,19 +195,16 @@ export class RideService {
    * same time.
    */
   async assignDriver(rideId: number, driverId: number): Promise<VtcRide | null> {
-    return pgTransaction(async (tx) => {
-      const ride = await pgOneOrNone(
-        `UPDATE vtc_rides
-         SET driver_id = $1, status = 'accepted'
-         WHERE id = $2 AND status = 'requested'
-         RETURNING *`,
-        [driverId, rideId],
-        tx
-      );
-      if (ride) {
-        await pgNone(`UPDATE vtc_drivers SET status = 'busy' WHERE id = $1`, [driverId], tx);
-      }
-      return ride;
+    return prismaDb.$transaction(async (tx) => {
+      const updateResult = await tx.vtc_rides.updateMany({
+        where: { id: rideId, status: 'requested' },
+        data: { driver_id: driverId, status: 'accepted' },
+      });
+      if (updateResult.count === 0) return null;
+
+      await tx.vtc_drivers.update({ where: { id: driverId }, data: { status: 'busy' } });
+
+      return await tx.vtc_rides.findUnique({ where: { id: rideId } }) as unknown as VtcRide;
     });
   }
 
@@ -227,33 +215,33 @@ export class RideService {
    * assignDriver.
    */
   async updateRideStatus(rideId: number, newStatus: string): Promise<VtcRide | null> {
-    return pgTransaction(async (tx) => {
-      const current = await pgOneOrNone<VtcRide & { driver_id: number | null }>(
-        `SELECT status, driver_id FROM vtc_rides WHERE id = $1`,
-        [rideId],
-        tx
-      );
+    return prismaDb.$transaction(async (tx) => {
+      const current = await tx.vtc_rides.findUnique({
+        where: { id: rideId },
+        select: { status: true, driver_id: true },
+      });
       if (!current) return null;
 
-      const allowed = RIDE_STATUS_TRANSITIONS[current.status] || [];
+      const allowed = RIDE_STATUS_TRANSITIONS[current.status ?? ''] || [];
       if (!allowed.includes(newStatus)) {
         throw new Error(
           `Transition invalide : ${current.status} → ${newStatus}`
         );
       }
 
-      const dropoffClause = newStatus === 'completed' ? `, dropoff_time = CURRENT_TIMESTAMP` : '';
-      const ride = await pgOne(
-        `UPDATE vtc_rides SET status = $1 ${dropoffClause} WHERE id = $2 RETURNING *`,
-        [newStatus, rideId],
-        tx
-      );
+      const ride = await tx.vtc_rides.update({
+        where: { id: rideId },
+        data: {
+          status: newStatus,
+          ...(newStatus === 'completed' ? { dropoff_time: new Date() } : {}),
+        },
+      });
 
       if (newStatus === 'completed' && current.driver_id) {
-        await pgNone(`UPDATE vtc_drivers SET status = 'online' WHERE id = $1`, [current.driver_id], tx);
+        await tx.vtc_drivers.update({ where: { id: current.driver_id }, data: { status: 'online' } });
       }
 
-      return ride;
+      return ride as unknown as VtcRide;
     });
   }
 
@@ -262,21 +250,18 @@ export class RideService {
    * reasoning as completing a ride.
    */
   async cancelRide(rideId: number, data: CancelRideDto): Promise<VtcRide | null> {
-    return pgTransaction(async (tx) => {
-      const ride = await pgOneOrNone(
-        `UPDATE vtc_rides
-         SET status = 'cancelled',
-             cancellation_reason = $1,
-             cancelled_by = $2
-         WHERE id = $3 AND status != 'cancelled'
-         RETURNING *`,
-        [data.reason, data.cancelledBy, rideId],
-        tx
-      );
-      if (ride && ride.driver_id) {
-        await pgNone(`UPDATE vtc_drivers SET status = 'online' WHERE id = $1`, [ride.driver_id], tx);
+    return prismaDb.$transaction(async (tx) => {
+      const updateResult = await tx.vtc_rides.updateMany({
+        where: { id: rideId, status: { not: 'cancelled' } },
+        data: { status: 'cancelled', cancellation_reason: data.reason, cancelled_by: data.cancelledBy },
+      });
+      if (updateResult.count === 0) return null;
+
+      const ride = await tx.vtc_rides.findUnique({ where: { id: rideId } });
+      if (ride?.driver_id) {
+        await tx.vtc_drivers.update({ where: { id: ride.driver_id }, data: { status: 'online' } });
       }
-      return ride;
+      return ride as unknown as VtcRide;
     });
   }
 
@@ -287,10 +272,12 @@ export class RideService {
    * INSERT).
    */
   async markPaymentCompleted(rideId: number): Promise<VtcRide | null> {
-    return pgOneOrNone(
-      `UPDATE vtc_rides SET payment_status = 'completed' WHERE id = $1 RETURNING *`,
-      [rideId]
-    );
+    const result = await prismaDb.vtc_rides.updateMany({
+      where: { id: rideId },
+      data: { payment_status: 'completed' },
+    });
+    if (result.count === 0) return null;
+    return await prismaDb.vtc_rides.findUnique({ where: { id: rideId } }) as unknown as VtcRide;
   }
 
   /**
@@ -301,18 +288,13 @@ export class RideService {
     ratedBy: 'customer' | 'driver',
     data: RateRideDto
   ): Promise<VtcRide | null> {
-    const field = ratedBy === 'customer' ? 'driver_rating' : 'customer_rating';
-    const feedbackField = ratedBy === 'customer'
-      ? 'driver_feedback'
-      : 'customer_feedback';
+    const update: Prisma.vtc_ridesUncheckedUpdateInput = ratedBy === 'customer'
+      ? { driver_rating: data.rating, driver_feedback: data.feedback }
+      : { customer_rating: data.rating, customer_feedback: data.feedback };
 
-    return pgOneOrNone(
-      `UPDATE vtc_rides
-       SET ${field} = $1, ${feedbackField} = $2
-       WHERE id = $3
-       RETURNING *`,
-      [data.rating, data.feedback, rideId]
-    );
+    const result = await prismaDb.vtc_rides.updateMany({ where: { id: rideId }, data: update });
+    if (result.count === 0) return null;
+    return await prismaDb.vtc_rides.findUnique({ where: { id: rideId } }) as unknown as VtcRide;
   }
 }
 

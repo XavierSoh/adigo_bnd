@@ -1,9 +1,21 @@
 // tripGeneration.controller.ts
-import { Request, Response } from 'express'; 
-const generationService = new TripGenerationService();
-import * as tbl from "../utils/table_names";
-import { pgAny } from '../utils/prisma-compat';
+// Migrated to Prisma's native model API — logic lives in
+// GeneratedTripRepository, see BOOKING_MODULE_NOTES.md ("Full Prisma
+// relational-API migration", tier 4).
+import { Request, Response } from 'express';
 import { TripGenerationService } from '../services/tripGeneration.service';
+import { GeneratedTripRepository } from '../repository/generated-trip.repository';
+
+// PRE-EXISTING BUG FOUND AND FIXED (unrelated to this conversion, flagged
+// per the "signaler chaque écart" rule): `new TripGenerationService()` was
+// declared BEFORE its own `import` statement in the original file.
+// TypeScript's CommonJS output preserves statement order for top-level
+// code, so evaluating this module standalone throws "Cannot access
+// 'tripGeneration_service_1' before initialization" immediately — this
+// file has zero live importers (confirmed dead/unmounted, see
+// BOOKING_MODULE_NOTES.md), so the crash was never actually exercised in
+// production, only surfaced now while directly testing this conversion.
+const generationService = new TripGenerationService();
 
 
 export const tripGenerationController = {
@@ -48,20 +60,12 @@ export const tripGenerationController = {
     getGeneratedTrips: async (req: Request, res: Response) => {
         try {
             const { startDate, endDate } = req.query;
-            
-            const trips = await pgAny(`
-                SELECT gt.*, t.departure_city, t.arrival_city, t.price,
-                       b.registration_number, b.capacity,
-                       CONCAT(s.first_name, ' ', s.last_name) as driver_name
-                FROM ${tbl.kGeneratedTrip} gt
-                JOIN ${tbl.kTrip} t ON gt.trip_id = t.id
-                LEFT JOIN ${tbl.kBus} b ON gt.bus_id = b.id
-                LEFT JOIN ${tbl.kStaff} s ON gt.driver_id = s.id
-                WHERE gt.actual_departure_time >= $1 
-                AND gt.actual_departure_time <= $2
-                ORDER BY gt.actual_departure_time
-            `, [startDate, endDate]);
-            
+
+            const trips = await GeneratedTripRepository.findWithDriverDetailsByDateRange(
+                new Date(startDate as string),
+                new Date(endDate as string)
+            );
+
             res.json({ success: true, trips });
             
         } catch (error) {

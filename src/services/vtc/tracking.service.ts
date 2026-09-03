@@ -6,11 +6,12 @@
  * it — the "live tracking" shown anywhere in the apps was a client-side
  * mock. This is the real implementation (see VTC_MODULE_PLAN.md, Phase 0.3).
  *
- * Migrated to Prisma via the pg-promise-shaped compat shim in
- * prisma-compat.ts — same SQL/params, `pool.tx` -> `pgTransaction`.
+ * Migrated to Prisma's native model API (prisma.vtc_ride_tracking.*) — see
+ * BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration",
+ * tier 4) and VTC_MODULE_PLAN.md.
  */
 
-import { pgOne, pgAny, pgOneOrNone, pgNone, pgTransaction } from '../../utils/prisma-compat';
+import prismaDb from '../../config/prismaClient';
 import { RideTracking, CreateTrackingDto, TrackingHistory } from '../../models/vtc/tracking.model';
 
 export class TrackingService {
@@ -20,59 +21,59 @@ export class TrackingService {
    * driver list stay current — one GPS ping now feeds both.
    */
   async recordPoint(rideId: number, data: CreateTrackingDto): Promise<RideTracking> {
-    return pgTransaction(async (tx) => {
-      const point = await pgOne(
-        `INSERT INTO vtc_ride_tracking (ride_id, latitude, longitude, heading, speed)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *`,
-        [rideId, data.latitude, data.longitude, data.heading ?? null, data.speed ?? null],
-        tx
-      );
+    return prismaDb.$transaction(async (tx) => {
+      const point = await tx.vtc_ride_tracking.create({
+        data: {
+          ride_id: rideId,
+          latitude: data.latitude,
+          longitude: data.longitude,
+          heading: data.heading ?? null,
+          speed: data.speed ?? null,
+        },
+      });
 
-      const ride = await pgOneOrNone(`SELECT driver_id FROM vtc_rides WHERE id = $1`, [rideId], tx);
+      const ride = await tx.vtc_rides.findUnique({ where: { id: rideId }, select: { driver_id: true } });
       if (ride?.driver_id) {
-        await pgNone(
-          `UPDATE vtc_drivers
-           SET current_latitude = $1, current_longitude = $2, last_location_update = CURRENT_TIMESTAMP
-           WHERE id = $3`,
-          [data.latitude, data.longitude, ride.driver_id],
-          tx
-        );
+        await tx.vtc_drivers.update({
+          where: { id: ride.driver_id },
+          data: { current_latitude: data.latitude, current_longitude: data.longitude, last_location_update: new Date() },
+        });
       }
 
-      return point;
+      return point as unknown as RideTracking;
     });
   }
 
   /** Full point history for a ride, oldest first — used to replay a trip's track. */
   async getHistory(rideId: number): Promise<TrackingHistory> {
-    const points: RideTracking[] = await pgAny(
-      `SELECT * FROM vtc_ride_tracking WHERE ride_id = $1 ORDER BY recorded_at ASC`,
-      [rideId]
-    );
+    const points = await prismaDb.vtc_ride_tracking.findMany({
+      where: { ride_id: rideId },
+      orderBy: { recorded_at: 'asc' },
+    });
 
     let totalDistance = 0;
     for (let i = 1; i < points.length; i++) {
       totalDistance += this.haversineKm(
-        points[i - 1].latitude, points[i - 1].longitude,
-        points[i].latitude, points[i].longitude
+        Number(points[i - 1].latitude), Number(points[i - 1].longitude),
+        Number(points[i].latitude), Number(points[i].longitude)
       );
     }
 
-    const speeds = points.map((p) => p.speed).filter((s): s is number => s != null);
+    const speeds = points.map((p) => p.speed).filter((s): s is NonNullable<typeof s> => s != null).map(Number);
     const averageSpeed = speeds.length
       ? speeds.reduce((sum, s) => sum + s, 0) / speeds.length
       : 0;
 
-    return { rideId: String(rideId), points, totalDistance, averageSpeed };
+    return { rideId: String(rideId), points: points as unknown as RideTracking[], totalDistance, averageSpeed };
   }
 
   /** Most recent point for a ride, or null if nothing has been recorded yet. */
   async getLatest(rideId: number): Promise<RideTracking | null> {
-    return pgOneOrNone(
-      `SELECT * FROM vtc_ride_tracking WHERE ride_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
-      [rideId]
-    );
+    const point = await prismaDb.vtc_ride_tracking.findFirst({
+      where: { ride_id: rideId },
+      orderBy: { recorded_at: 'desc' },
+    });
+    return point as unknown as RideTracking | null;
   }
 
   private haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {

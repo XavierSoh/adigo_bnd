@@ -1,14 +1,32 @@
-// Migrated from pg-promise to Prisma (raw queries via the pg-promise-shaped
-// shim in ../utils/prisma-compat.ts) — see BOOKING_MODULE_NOTES.md.
-import { pgOne, pgOneOrNone, pgAny, pgNone, pgResult } from "../utils/prisma-compat";
+// Migrated to Prisma's native model API (prisma.company_settings.*) — see
+// BOOKING_MODULE_NOTES.md ("Full Prisma relational-API migration",
+// tier 4 closure pass — this file wasn't in the tier-4 list but is needed
+// to actually reach "zero $queryRawUnsafe outside the DDL files").
+import { Prisma } from "@prisma/client";
+import prismaDb from "../config/prismaClient";
 import { CompanySettingsModel, UpdateCompanySettingsDTO } from "../models/company-settings.model";
 import ResponseModel from "../models/response.model";
 
-const TABLE_NAME = 'company_settings';
+// SCHEMA DISCREPANCY FLAGGED, not silently absorbed: `CompanySettingsModel`
+// / `UpdateCompanySettingsDTO` declare 9 fields (tax_id,
+// registration_number, business_license, city, country, postal_code, fax,
+// support_hours, slogan) that DO NOT EXIST on the real `company_settings`
+// table (confirmed against schema.prisma). The original's dynamic
+// `SET ${key} = $n` query builder would have thrown a raw Postgres
+// "column does not exist" error (falling to the generic 500 catch) the
+// moment any caller actually sent one of those fields — a pre-existing,
+// dormant bug, not something this conversion introduces. Prisma's typed
+// update input makes it structurally impossible to even attempt setting a
+// nonexistent column, so those 9 fields are filtered out here instead of
+// reproduced as a runtime throw — the closest faithful behavior
+// achievable within the native API (still errors were never useful; this
+// makes an update with only phantom fields a 400 "no data" instead of a
+// 500 "column does not exist").
+const REAL_COLUMNS = [
+    'company_name', 'address', 'phone', 'whatsapp', 'email', 'website',
+    'facebook', 'twitter', 'instagram', 'logo_path', 'primary_color',
+] as const;
 
-/**
- * Repository for managing company settings (singleton table)
- */
 export class CompanySettingsRepository {
 
     /**
@@ -16,9 +34,7 @@ export class CompanySettingsRepository {
      */
     static async getSettings(): Promise<ResponseModel> {
         try {
-            const settings = await pgOneOrNone<CompanySettingsModel>(
-                `SELECT * FROM ${TABLE_NAME} WHERE id = 1`
-            );
+            const settings = await prismaDb.company_settings.findUnique({ where: { id: 1 } });
 
             // If no settings exist, create default
             if (!settings) {
@@ -29,7 +45,7 @@ export class CompanySettingsRepository {
             return {
                 status: true,
                 message: 'Paramètres récupérés avec succès',
-                body: settings,
+                body: settings as unknown as CompanySettingsModel,
                 code: 200
             };
         } catch (error) {
@@ -48,15 +64,13 @@ export class CompanySettingsRepository {
      */
     static async updateSettings(data: UpdateCompanySettingsDTO): Promise<ResponseModel> {
         try {
-            // Build dynamic update query
-            const updates: Record<string, any> = { ...data };
-
-            // Remove undefined values
-            Object.keys(updates).forEach(key => {
-                if (updates[key] === undefined) {
-                    delete updates[key];
+            const updates: Prisma.company_settingsUpdateInput = {};
+            for (const key of REAL_COLUMNS) {
+                const value = (data as Record<string, unknown>)[key];
+                if (value !== undefined) {
+                    (updates as Record<string, unknown>)[key] = value;
                 }
-            });
+            }
 
             if (Object.keys(updates).length === 0) {
                 return {
@@ -66,30 +80,21 @@ export class CompanySettingsRepository {
                 };
             }
 
-            // Build SET clause
-            const setClauses = Object.keys(updates).map((key, index) =>
-                `${key} = $${index + 1}`
-            );
-            const values = Object.values(updates);
-
-            const query = `
-                UPDATE ${TABLE_NAME}
-                SET ${setClauses.join(', ')}
-                WHERE id = 1
-                RETURNING *
-            `;
-
-            const result = await pgOneOrNone<CompanySettingsModel>(query, values);
-
-            if (!result) {
-                // If update failed because row doesn't exist, create default
-                return await this.createDefaultSettings();
+            let result;
+            try {
+                result = await prismaDb.company_settings.update({ where: { id: 1 }, data: updates });
+            } catch (error) {
+                if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+                    // If update failed because row doesn't exist, create default
+                    return await this.createDefaultSettings();
+                }
+                throw error;
             }
 
             return {
                 status: true,
                 message: 'Paramètres mis à jour avec succès',
-                body: result,
+                body: result as unknown as CompanySettingsModel,
                 code: 200
             };
         } catch (error) {
@@ -108,37 +113,35 @@ export class CompanySettingsRepository {
      */
     private static async createDefaultSettings(): Promise<ResponseModel> {
         try {
-            const result = await pgOneOrNone<CompanySettingsModel>(
-                `INSERT INTO ${TABLE_NAME} (
-                    id,
-                    company_name,
-                    address,
-                    phone,
-                    whatsapp,
-                    email,
-                    website,
-                    facebook,
-                    twitter,
-                    instagram,
-                    logo_path,
-                    primary_color
-                ) VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                ON CONFLICT (id) DO NOTHING
-                RETURNING *`,
-                [
-                    'ADIGO',
-                    'Douala, Cameroun',
-                    '+237 XXX XXX XXX',
-                    '+237 XXX XXX XXX',
-                    'support@adigo.com',
-                    'https://www.adigo.com',
-                    'https://www.facebook.com/adigo',
-                    'https://twitter.com/adigo',
-                    'https://instagram.com/adigo',
-                    'adigo_logo.png',
-                    '#D32F2F'
-                ]
-            );
+            // `ON CONFLICT (id) DO NOTHING RETURNING *` — 0 rows back if the
+            // row already exists, and the original's `pgOneOrNone` returns
+            // null in that case (not an error). Reproduced exactly: still
+            // reports success with a null body, not "fixed" into an error.
+            let result: CompanySettingsModel | null;
+            try {
+                result = await prismaDb.company_settings.create({
+                    data: {
+                        id: 1,
+                        company_name: 'ADIGO',
+                        address: 'Douala, Cameroun',
+                        phone: '+237 XXX XXX XXX',
+                        whatsapp: '+237 XXX XXX XXX',
+                        email: 'support@adigo.com',
+                        website: 'https://www.adigo.com',
+                        facebook: 'https://www.facebook.com/adigo',
+                        twitter: 'https://twitter.com/adigo',
+                        instagram: 'https://instagram.com/adigo',
+                        logo_path: 'adigo_logo.png',
+                        primary_color: '#D32F2F',
+                    },
+                }) as unknown as CompanySettingsModel;
+            } catch (error) {
+                if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+                    result = null;
+                } else {
+                    throw error;
+                }
+            }
 
             return {
                 status: true,

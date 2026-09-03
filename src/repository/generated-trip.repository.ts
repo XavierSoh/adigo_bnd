@@ -403,6 +403,42 @@ export class GeneratedTripRepository {
         }
     }
 
+    // Flattened generated-trip listing with driver name — new method,
+    // needed by tripGeneration.controller.ts's getGeneratedTrips(), which
+    // previously did this itself via a raw SQL JOIN inline in the
+    // controller (no repository method existed for it before this
+    // conversion). Deliberately a different flattened shape from
+    // findByDateRange above (no nested trip/agency object, adds
+    // driver_name) — matches this specific endpoint's original SELECT.
+    static async findWithDriverDetailsByDateRange(startDate: Date, endDate: Date) {
+        const rows = await prismaDb.generated_trip.findMany({
+            where: { actual_departure_time: { gte: startDate, lte: endDate } },
+            include: {
+                trip: { select: { departure_city: true, arrival_city: true, price: true } },
+                bus: { select: { registration_number: true, capacity: true } },
+                staff_generated_trip_driver_idTostaff: { select: { first_name: true, last_name: true } },
+            },
+            orderBy: { actual_departure_time: 'asc' },
+        });
+
+        return rows.map((row) => {
+            const { trip, bus, staff_generated_trip_driver_idTostaff, ...rest } = row;
+            return {
+                ...rest,
+                departure_city: trip.departure_city,
+                arrival_city: trip.arrival_city,
+                price: trip.price,
+                registration_number: bus?.registration_number ?? null,
+                capacity: bus?.capacity ?? null,
+                // `CONCAT(s.first_name, ' ', s.last_name)` — Postgres
+                // CONCAT treats NULL as empty string rather than
+                // propagating NULL; a trip with no driver yields a single
+                // space, not null. Reproduced exactly.
+                driver_name: `${staff_generated_trip_driver_idTostaff?.first_name ?? ''} ${staff_generated_trip_driver_idTostaff?.last_name ?? ''}`,
+            };
+        });
+    }
+
     // Get available cities (unique departure and arrival cities from trips)
     static async getAvailableCities(): Promise<ResponseModel> {
         try {
