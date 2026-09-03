@@ -378,13 +378,18 @@ export class CustomerController {
     // renders an HTML landing page instead of JSON since it's opened by clicking
     // a link (browser navigation), not called by the app itself.
     static async verifyEmailToken(req: Request, res: Response): Promise<void> {
-        const lang = req.lang || 'fr';
         try {
             const { token } = req.params as { token: string };
             const result = await CustomerRepository.verifyEmailByToken(token);
+            // Prefer the customer's own stored preference over request-based
+            // detection (Accept-Language/query) - a link opened from an email
+            // client doesn't reliably carry either, and the emails themselves
+            // are already sent in this same language.
+            const body = result.body as { preferred_language?: 'fr' | 'en' } | undefined;
+            const lang = body?.preferred_language || req.lang || 'fr';
             res.status(result.status ? 200 : 400).send(verificationResultPage(lang, result.status));
         } catch (error) {
-            res.status(500).send(verificationResultPage(lang, false));
+            res.status(500).send(verificationResultPage(req.lang || 'fr', false));
         }
     }
 

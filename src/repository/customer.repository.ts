@@ -529,10 +529,12 @@ export class CustomerRepository {
         try {
             const customer = await prismaDb.customer.findFirst({
                 where: { email_verification_token: token },
-                select: { id: true, email_verification_expires_at: true },
+                select: { id: true, email_verification_expires_at: true, preferred_language: true },
             });
 
             if (!customer || !customer.email_verification_expires_at || customer.email_verification_expires_at < new Date()) {
+                // No customer found for an expired/invalid token - preferred_language
+                // is unknown, so the controller falls back to request-based detection.
                 return { status: false, message: "Lien invalide ou expiré", code: 400 };
             }
 
@@ -546,7 +548,12 @@ export class CustomerRepository {
                 },
             });
 
-            return { status: true, message: "Email vérifié", code: 200 };
+            return {
+                status: true,
+                message: "Email vérifié",
+                body: { preferred_language: customer.preferred_language },
+                code: 200,
+            };
         } catch (error) {
             return { status: false, message: "Erreur lors de la vérification de l'email", code: 500 };
         }
