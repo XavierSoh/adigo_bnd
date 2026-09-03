@@ -7,7 +7,11 @@ import { Customer } from "../models/customer.model";
 import ResponseModel from "../models/response.model";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { requireEnv } from "../utils/env";
+import { sendEmail } from "../services/email.service";
+import { welcomeEmail, passwordResetEmail } from "../emails/templates";
+import { Language } from "../utils/i18n";
 
 // Field sets kept identical to the two different RETURNING/SELECT column
 // lists the original raw SQL used (findById's list and update's list are
@@ -35,35 +39,75 @@ const updateReturnSelect = {
 } satisfies Prisma.customerSelect;
 
 export class CustomerRepository {
-    // Stockage temporaire des codes de reset (à remplacer par une vraie base/cache en prod)
-    private static resetCodes: { [email: string]: string } = {};
-
-    static async setResetCode(email: string, code: string): Promise<void> {
-        this.resetCodes[email] = code;
-    }
-    static async verifyResetCode(email: string, code: string): Promise<boolean> {
-        return this.resetCodes[email] === code;
-    }
-
-    static async updatePasswordByEmail(email: string, newPassword: string): Promise<ResponseModel> {
+    // Sends the password-reset code by email regardless of whether a
+    // matching, non-deleted customer was found — the response to the
+    // caller is identical either way (see forgotPassword's own comment)
+    // so this never reveals whether an address/phone is registered.
+    static async forgotPassword(emailOrPhone: string, lang: Language = 'fr'): Promise<ResponseModel> {
         try {
-            const hashed = await bcrypt.hash(newPassword, 10);
-            // `email` is @unique, but the original also guarded on
-            // is_deleted=FALSE, which a single-unique-field `.update()`
-            // can't express — updateMany+refetch preserves that guard.
-            const result = await prismaDb.customer.updateMany({
-                where: { email, is_deleted: false },
-                data: { password: hashed },
+            const customer = await prismaDb.customer.findFirst({
+                where: {
+                    is_deleted: false,
+                    OR: [{ email: emailOrPhone }, { phone: emailOrPhone }],
+                },
+                select: { id: true, first_name: true, email: true, preferred_language: true },
             });
-            if (result.count === 0) {
-                return { status: false, message: "Client non trouvé", code: 404 };
+
+            if (customer?.email) {
+                const code = crypto.randomInt(100000, 1000000).toString(); // 6 digits
+                await prismaDb.customer.update({
+                    where: { id: customer.id },
+                    data: {
+                        password_reset_code: code,
+                        password_reset_expires_at: new Date(Date.now() + 30 * 60 * 1000), // 30 min
+                    },
+                });
+
+                const emailLang = (customer.preferred_language as Language) || lang;
+                const { subject, html, text } = passwordResetEmail(emailLang, {
+                    firstName: customer.first_name,
+                    code,
+                });
+                sendEmail({ to: customer.email, subject, html, text }).catch(() => { /* logged in email.service */ });
             }
-            const updated = await prismaDb.customer.findUnique({
-                where: { email },
-                select: { id: true, email: true },
+
+            return {
+                status: true,
+                message: "Si un compte existe avec ces informations, un code de réinitialisation a été envoyé par email",
+                code: 200,
+            };
+        } catch (error) {
+            return { status: false, message: "Erreur lors de la demande de réinitialisation", code: 500 };
+        }
+    }
+
+    static async resetPassword(emailOrPhone: string, code: string, newPassword: string): Promise<ResponseModel> {
+        try {
+            const customer = await prismaDb.customer.findFirst({
+                where: {
+                    is_deleted: false,
+                    OR: [{ email: emailOrPhone }, { phone: emailOrPhone }],
+                },
+                select: { id: true, password_reset_code: true, password_reset_expires_at: true },
             });
-            delete this.resetCodes[email];
-            return { status: true, message: "Mot de passe réinitialisé", body: updated, code: 200 };
+
+            if (
+                !customer ||
+                !customer.password_reset_code ||
+                customer.password_reset_code !== code ||
+                !customer.password_reset_expires_at ||
+                customer.password_reset_expires_at < new Date()
+            ) {
+                return { status: false, message: "Code invalide ou expiré", code: 400 };
+            }
+
+            const hashed = await bcrypt.hash(newPassword, 10);
+            await prismaDb.customer.update({
+                where: { id: customer.id },
+                data: { password: hashed, password_reset_code: null, password_reset_expires_at: null },
+            });
+
+            return { status: true, message: "Mot de passe réinitialisé avec succès", code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la mise à jour du mot de passe", code: 500 };
         }
@@ -73,6 +117,7 @@ export class CustomerRepository {
     static async create(customer: Customer): Promise<ResponseModel> {
         try {
             const hashedPassword = await bcrypt.hash(customer.password, 10);
+            const emailVerificationToken = customer.email ? crypto.randomBytes(32).toString('hex') : null;
 
             const result = await prismaDb.customer.create({
                 data: {
@@ -95,6 +140,10 @@ export class CustomerRepository {
                     account_status: customer.account_status ?? 'active',
                     email_verified: customer.email_verified ?? false,
                     phone_verified: customer.phone_verified ?? false,
+                    email_verification_token: emailVerificationToken,
+                    email_verification_expires_at: emailVerificationToken
+                        ? new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
+                        : null,
                 },
                 select: {
                     id: true, first_name: true, last_name: true, email: true, phone: true,
@@ -111,6 +160,15 @@ export class CustomerRepository {
                 requireEnv('JWT_SECRET'),
                 { expiresIn: '7d' }
             );
+
+            if (result.email && emailVerificationToken) {
+                const apiBaseUrl = process.env.API_BASE_URL || 'https://api.adigobookings.com';
+                const verifyUrl = `${apiBaseUrl}/v1/api/customers/verify-email/${emailVerificationToken}`;
+                const lang = (result.preferred_language as Language) || 'fr';
+                const { subject, html, text } = welcomeEmail(lang, { firstName: result.first_name, verifyUrl });
+                // Fire-and-forget: registration must succeed even if the mail server is down.
+                sendEmail({ to: result.email, subject, html, text }).catch(() => { /* logged in email.service */ });
+            }
 
             return {
                 status: true,
@@ -456,6 +514,36 @@ export class CustomerRepository {
             await prismaDb.customer.updateMany({
                 where: { id },
                 data: { email_verified: true, updated_at: new Date() },
+            });
+
+            return { status: true, message: "Email vérifié", code: 200 };
+        } catch (error) {
+            return { status: false, message: "Erreur lors de la vérification de l'email", code: 500 };
+        }
+    }
+
+    // Verify email via the token emailed at registration (public, unauthenticated
+    // link click) - distinct from the id-based verifyEmail above, which stays as
+    // an internal/admin action with no ownership proof required.
+    static async verifyEmailByToken(token: string): Promise<ResponseModel> {
+        try {
+            const customer = await prismaDb.customer.findFirst({
+                where: { email_verification_token: token },
+                select: { id: true, email_verification_expires_at: true },
+            });
+
+            if (!customer || !customer.email_verification_expires_at || customer.email_verification_expires_at < new Date()) {
+                return { status: false, message: "Lien invalide ou expiré", code: 400 };
+            }
+
+            await prismaDb.customer.update({
+                where: { id: customer.id },
+                data: {
+                    email_verified: true,
+                    email_verification_token: null,
+                    email_verification_expires_at: null,
+                    updated_at: new Date(),
+                },
             });
 
             return { status: true, message: "Email vérifié", code: 200 };

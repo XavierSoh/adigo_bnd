@@ -253,6 +253,10 @@ model customer {
   default_mtn_mobile_money_number                              String?               @db.VarChar(20)
   role                                                         String?               @default("customer") @db.VarChar(20)
   is_active                                                    Boolean?              @default(true)
+  email_verification_token                                     String?               @unique @db.VarChar(255)
+  email_verification_expires_at                                DateTime?             @db.Timestamp(6)
+  password_reset_code                                          String?               @db.VarChar(10)
+  password_reset_expires_at                                    DateTime?             @db.Timestamp(6)
   activity_log                                                 activity_log[]
   booking_booking_created_byTocustomer                         booking[]             @relation("booking_created_byTocustomer")
   booking_booking_customer_idTocustomer                        booking[]             @relation("booking_customer_idTocustomer")

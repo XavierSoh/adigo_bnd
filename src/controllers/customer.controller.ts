@@ -6,6 +6,7 @@ import { CustomerRepository } from "../repository/customer.repository";
 import { BookingRepository } from "../repository/booking.repository";
 import { Customer } from "../models/customer.model";
 import { I18n } from "../utils/i18n";
+import { verificationResultPage } from "../emails/templates";
 
 export class CustomerController {
     // Create customer (Registration)
@@ -370,6 +371,63 @@ export class CustomerController {
                 message: "Erreur serveur",
                 code: 500
             });
+        }
+    }
+
+    // Verify email via the link sent at registration - public, unauthenticated,
+    // renders an HTML landing page instead of JSON since it's opened by clicking
+    // a link (browser navigation), not called by the app itself.
+    static async verifyEmailToken(req: Request, res: Response): Promise<void> {
+        const lang = req.lang || 'fr';
+        try {
+            const { token } = req.params as { token: string };
+            const result = await CustomerRepository.verifyEmailByToken(token);
+            res.status(result.status ? 200 : 400).send(verificationResultPage(lang, result.status));
+        } catch (error) {
+            res.status(500).send(verificationResultPage(lang, false));
+        }
+    }
+
+    // Request a password reset code by email/phone
+    static async forgotPassword(req: Request, res: Response): Promise<void> {
+        try {
+            const lang = req.lang || 'fr';
+            const { email_or_phone } = req.body;
+
+            if (!email_or_phone) {
+                res.status(400).json({
+                    status: false,
+                    message: I18n.t('email_phone_password_required', lang),
+                    code: 400
+                });
+                return;
+            }
+
+            const result = await CustomerRepository.forgotPassword(email_or_phone, lang);
+            res.status(result.code).json(result);
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+        }
+    }
+
+    // Confirm a password reset with the emailed code + new password
+    static async resetPassword(req: Request, res: Response): Promise<void> {
+        try {
+            const { email_or_phone, code, new_password } = req.body;
+
+            if (!email_or_phone || !code || !new_password) {
+                res.status(400).json({
+                    status: false,
+                    message: "email_or_phone, code et new_password sont requis",
+                    code: 400
+                });
+                return;
+            }
+
+            const result = await CustomerRepository.resetPassword(email_or_phone, code, new_password);
+            res.status(result.code).json(result);
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
         }
     }
 

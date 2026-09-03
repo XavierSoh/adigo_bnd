@@ -332,6 +332,7 @@
     "node-gyp-build": "^4.8.4",
     "node-int64": "^0.4.0",
     "node-releases": "^2.0.19",
+    "nodemailer": "^9.1.1",
     "normalize-path": "^3.0.0",
     "npm-run-path": "^4.0.1",
     "object-assign": "^4.1.1",
@@ -505,6 +506,7 @@
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.0.0",
     "@types/node": "^20.19.30",
+    "@types/nodemailer": "^8.0.1",
     "jest": "^29.7.0",
     "nodemon": "^3.1.11",
     "prisma": "^7.10.0"

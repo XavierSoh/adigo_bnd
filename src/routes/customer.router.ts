@@ -13,6 +13,14 @@ const customerRouter = Router();
 customerRouter.post("/login", CustomerController.login);
 customerRouter.post("/register", CustomerController.create);
 
+// Password reset (mobile) - email code, no web reset form (no customer-facing
+// web frontend exists; the code is entered back through the app itself)
+customerRouter.post("/forgot-password", CustomerController.forgotPassword);
+customerRouter.post("/reset-password", CustomerController.resetPassword);
+
+// Email verification link (clicked from the welcome email, opened in a browser)
+customerRouter.get("/verify-email/:token", CustomerController.verifyEmailToken);
+
 // CRUD routes
 customerRouter.post("/", CustomerController.create);
 customerRouter.get("/", CustomerController.getAll);
