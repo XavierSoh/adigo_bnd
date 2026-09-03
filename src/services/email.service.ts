@@ -31,8 +31,15 @@ function getTransporter(): Transporter | null {
     transporter = nodemailer.createTransport({
         host: SMTP_HOST,
         port: parseInt(SMTP_PORT, 10),
-        secure: false, // STARTTLS negotiated on the plain port, not implicit TLS
-        requireTLS: parseInt(SMTP_PORT, 10) !== 25 ? true : false,
+        secure: false,
+        // The backend and Postal run on the same VPS, connected over
+        // loopback (127.0.0.1) - nodemailer otherwise opportunistically
+        // negotiates STARTTLS since Postal advertises it, and that fails
+        // certificate hostname validation (the cert is issued for
+        // postal.adigobookings.com, not 127.0.0.1). Traffic never leaves
+        // the host, so skip TLS entirely here rather than disabling
+        // certificate checks.
+        ignoreTLS: true,
         auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
     return transporter;
