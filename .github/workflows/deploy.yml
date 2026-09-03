@@ -16,7 +16,9 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            export PATH="/root/.nvm/versions/node/v22.11.0/bin:$PATH"
+            export NVM_DIR="/root/.nvm"
+            source "$NVM_DIR/nvm.sh"
+            nvm use default
             set -e
             cd /var/www/adigo
             rm -rf dist/

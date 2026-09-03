@@ -510,7 +510,7 @@
     "prisma": "^7.10.0"
   },
   "scripts": {
-    "build": "tsc && cp -r src/public dist/public 2>/dev/null || xcopy src\\public dist\\public /E /I /Y >nul 2>&1",
+    "build": "tsc && node scripts/copy-assets.js",
     "start": "node dist/src/index.js",
     "dev": "nodemon --ext ts,json --exec ts-node src/index.ts",
     "test": "jest"
