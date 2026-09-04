@@ -10,7 +10,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { requireEnv } from "../utils/env";
 import { sendEmail } from "../services/email.service";
-import { welcomeEmail, passwordResetEmail } from "../emails/templates";
+import { welcomeEmail, passwordResetEmail, passwordChangedEmail } from "../emails/templates";
 import { Language } from "../utils/i18n";
 
 // Field sets kept identical to the two different RETURNING/SELECT column
@@ -39,6 +39,11 @@ const updateReturnSelect = {
 } satisfies Prisma.customerSelect;
 
 export class CustomerRepository {
+    private static buildVerifyUrl(token: string): string {
+        const apiBaseUrl = process.env.API_BASE_URL || 'https://api.adigobookings.com';
+        return `${apiBaseUrl}/v1/api/customers/verify-email/${token}`;
+    }
+
     // Sends the password-reset code by email regardless of whether a
     // matching, non-deleted customer was found — the response to the
     // caller is identical either way (see forgotPassword's own comment)
@@ -88,7 +93,10 @@ export class CustomerRepository {
                     is_deleted: false,
                     OR: [{ email: emailOrPhone }, { phone: emailOrPhone }],
                 },
-                select: { id: true, password_reset_code: true, password_reset_expires_at: true },
+                select: {
+                    id: true, first_name: true, email: true, preferred_language: true,
+                    password_reset_code: true, password_reset_expires_at: true,
+                },
             });
 
             if (
@@ -107,9 +115,98 @@ export class CustomerRepository {
                 data: { password: hashed, password_reset_code: null, password_reset_expires_at: null },
             });
 
+            if (customer.email) {
+                const emailLang = (customer.preferred_language as Language) || 'fr';
+                const { subject, html, text } = passwordChangedEmail(emailLang, { firstName: customer.first_name });
+                sendEmail({ to: customer.email, subject, html, text }).catch(() => { /* logged in email.service */ });
+            }
+
             return { status: true, message: "Mot de passe réinitialisé avec succès", code: 200 };
         } catch (error) {
             return { status: false, message: "Erreur lors de la mise à jour du mot de passe", code: 500 };
+        }
+    }
+
+    // Change password while logged in - distinct from resetPassword's
+    // code-based flow: re-verifies the CURRENT password via bcrypt instead
+    // of a mailed code, and operates on an id the caller already proved
+    // ownership of via their own JWT (see the controller - never accepts
+    // an arbitrary :id from the URL).
+    static async changePassword(id: number, oldPassword: string, newPassword: string): Promise<ResponseModel> {
+        try {
+            const customer = await prismaDb.customer.findFirst({
+                where: { id, is_deleted: false },
+                select: { id: true, password: true, first_name: true, email: true, preferred_language: true },
+            });
+
+            if (!customer) {
+                return { status: false, message: "Client non trouvé", code: 404 };
+            }
+
+            const isOldPasswordValid = await bcrypt.compare(oldPassword, customer.password);
+            if (!isOldPasswordValid) {
+                return { status: false, message: "Ancien mot de passe incorrect", code: 400 };
+            }
+
+            const hashed = await bcrypt.hash(newPassword, 10);
+            await prismaDb.customer.update({
+                where: { id: customer.id },
+                data: { password: hashed, updated_at: new Date() },
+            });
+
+            if (customer.email) {
+                const emailLang = (customer.preferred_language as Language) || 'fr';
+                const { subject, html, text } = passwordChangedEmail(emailLang, { firstName: customer.first_name });
+                sendEmail({ to: customer.email, subject, html, text }).catch(() => { /* logged in email.service */ });
+            }
+
+            return { status: true, message: "Mot de passe modifié avec succès", code: 200 };
+        } catch (error) {
+            return { status: false, message: "Erreur lors du changement de mot de passe", code: 500 };
+        }
+    }
+
+    // Regenerates and resends the verification link for a customer who
+    // missed/lost the original email or whose 24h token expired.
+    // Authenticated-only (operates on req.userId via the controller, no
+    // email-lookup path) - login never requires email_verified (see
+    // authenticate()), so an unverified customer can always log back in to
+    // reach this, sidestepping the "does this email exist" enumeration
+    // problem entirely without needing a public variant.
+    static async resendVerificationEmail(id: number, lang: Language = 'fr'): Promise<ResponseModel> {
+        try {
+            const customer = await prismaDb.customer.findFirst({
+                where: { id, is_deleted: false },
+                select: { id: true, email: true, first_name: true, email_verified: true, preferred_language: true },
+            });
+
+            if (!customer) {
+                return { status: false, message: "Client non trouvé", code: 404 };
+            }
+            if (!customer.email) {
+                return { status: false, message: "Aucun email associé à ce compte", code: 400 };
+            }
+            if (customer.email_verified) {
+                return { status: true, message: "Cet email est déjà vérifié", code: 200 };
+            }
+
+            const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+            await prismaDb.customer.update({
+                where: { id: customer.id },
+                data: {
+                    email_verification_token: emailVerificationToken,
+                    email_verification_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                },
+            });
+
+            const emailLang = (customer.preferred_language as Language) || lang;
+            const verifyUrl = this.buildVerifyUrl(emailVerificationToken);
+            const { subject, html, text } = welcomeEmail(emailLang, { firstName: customer.first_name, verifyUrl });
+            sendEmail({ to: customer.email, subject, html, text }).catch(() => { /* logged in email.service */ });
+
+            return { status: true, message: "Email de vérification renvoyé", code: 200 };
+        } catch (error) {
+            return { status: false, message: "Erreur lors du renvoi de l'email de vérification", code: 500 };
         }
     }
 
@@ -162,8 +259,7 @@ export class CustomerRepository {
             );
 
             if (result.email && emailVerificationToken) {
-                const apiBaseUrl = process.env.API_BASE_URL || 'https://api.adigobookings.com';
-                const verifyUrl = `${apiBaseUrl}/v1/api/customers/verify-email/${emailVerificationToken}`;
+                const verifyUrl = this.buildVerifyUrl(emailVerificationToken);
                 const lang = (result.preferred_language as Language) || 'fr';
                 const { subject, html, text } = welcomeEmail(lang, { firstName: result.first_name, verifyUrl });
                 // Fire-and-forget: registration must succeed even if the mail server is down.
@@ -245,13 +341,16 @@ export class CustomerRepository {
         }
     }
 
-    // Update customer
+    // Update customer. Deliberately never touches `password` or
+    // `account_status`, even if present in the input - password changes
+    // must go through resetPassword()/changePassword() (which re-verify
+    // ownership via a mailed code or the current password), and
+    // account_status changes are an admin-only concern this generic
+    // self-service endpoint has no business granting. Neither field was
+    // ever sent by the mobile app through this path (confirmed), so this
+    // is a pure hardening with no client-side impact.
     static async update(id: number, customer: Partial<Customer>): Promise<ResponseModel> {
         try {
-            if (customer.password) {
-                customer.password = await bcrypt.hash(customer.password, 10);
-            }
-
             // Original used `COALESCE($n, column)` per field: an
             // undefined/null param leaves the column untouched. Prisma has
             // no COALESCE — reproduced by only including keys that are
@@ -262,7 +361,6 @@ export class CustomerRepository {
             if (customer.last_name != null) data.last_name = customer.last_name;
             if (customer.email != null) data.email = customer.email;
             if (customer.phone != null) data.phone = customer.phone;
-            if (customer.password != null) data.password = customer.password;
             if (customer.date_of_birth != null) data.date_of_birth = customer.date_of_birth;
             if (customer.gender != null) data.gender = customer.gender;
             if (customer.address != null) data.address = customer.address;
@@ -272,7 +370,6 @@ export class CustomerRepository {
             if (customer.preferred_language != null) data.preferred_language = customer.preferred_language;
             if (customer.notification_enabled != null) data.notification_enabled = customer.notification_enabled;
             if (customer.preferred_seat_type != null) data.preferred_seat_type = customer.preferred_seat_type;
-            if (customer.account_status != null) data.account_status = customer.account_status;
             if (customer.profile_picture != null) data.profile_picture = customer.profile_picture;
             if (customer.default_orange_money_number != null) data.default_orange_money_number = customer.default_orange_money_number;
             if (customer.default_mtn_mobile_money_number != null) data.default_mtn_mobile_money_number = customer.default_mtn_mobile_money_number;
@@ -293,6 +390,16 @@ export class CustomerRepository {
 
             return { status: true, message: "Client mis à jour", body: updated, code: 200 };
         } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+                const target = Array.isArray(error.meta?.target) ? (error.meta!.target as string[]) : [];
+                const field = target.includes('email') ? 'email' : target.includes('phone') ? 'phone' : null;
+                const message = field === 'email'
+                    ? "Un client avec cet email existe déjà"
+                    : field === 'phone'
+                        ? "Un client avec ce numéro de téléphone existe déjà"
+                        : "Un client avec ces informations existe déjà";
+                return { status: false, message, code: 409 };
+            }
             console.error('❌ [CustomerRepository] Error updating customer:', error);
             return { status: false, message: "Erreur lors de la mise à jour du client", code: 500 };
         }
@@ -421,8 +528,14 @@ export class CustomerRepository {
     // Login/Authentication
     static async authenticate(emailOrPhone: string, password: string): Promise<ResponseModel> {
         try {
+            // Curated select (findByIdSelect + password, stripped below
+            // before the response leaves this function) instead of a bare
+            // findFirst() - the raw row included email_verification_token/
+            // password_reset_code (internal secrets), leaked to the client
+            // on every login response until this fix.
             const customer = await prismaDb.customer.findFirst({
                 where: { OR: [{ email: emailOrPhone }, { phone: emailOrPhone }], is_deleted: false },
+                select: { ...findByIdSelect, password: true },
             });
 
             if (!customer) {

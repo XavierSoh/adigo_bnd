@@ -118,6 +118,33 @@ export function passwordResetEmail(lang: Language, params: { firstName: string; 
     };
 }
 
+// Security-notice style, no code/link - sent after BOTH the code-based
+// reset flow (resetPassword) and the authenticated change-password flow
+// succeed, so a customer is told either way.
+export function passwordChangedEmail(lang: Language, params: { firstName: string }): EmailContent {
+    const { firstName } = params;
+
+    if (lang === 'en') {
+        return {
+            subject: 'Your ADIGO password was changed',
+            text: `Hi ${firstName},\n\nThis confirms that your ADIGO account password was just changed. If you made this change, no action is needed.\n\nIf you didn't request this change, please contact our support team immediately.\n\n- The ADIGO team`,
+            html: layout(lang, 'Password changed', `
+                <p>Hi ${firstName}, this confirms that your ADIGO account password was just changed.</p>
+                <p style="color:#999;font-size:13px;">If you made this change, no action is needed. If you didn't request this change, please contact our support team immediately.</p>
+            `, "You're receiving this email because your ADIGO account password was changed."),
+        };
+    }
+
+    return {
+        subject: 'Votre mot de passe ADIGO a été modifié',
+        text: `Bonjour ${firstName},\n\nCeci confirme que le mot de passe de votre compte ADIGO vient d'être modifié. Si vous êtes à l'origine de ce changement, aucune action n'est requise.\n\nSi vous n'êtes pas à l'origine de cette modification, contactez immédiatement notre support.\n\n- L'équipe ADIGO`,
+        html: layout(lang, 'Mot de passe modifié', `
+            <p>Bonjour ${firstName}, ceci confirme que le mot de passe de votre compte ADIGO vient d'être modifié.</p>
+            <p style="color:#999;font-size:13px;">Si vous êtes à l'origine de ce changement, aucune action n'est requise. Sinon, contactez immédiatement notre support.</p>
+        `, "Vous recevez cet email car le mot de passe de votre compte ADIGO a été modifié."),
+    };
+}
+
 export function ticketPurchaseConfirmedEmail(lang: Language, params: {
     firstName: string; eventTitle: string; quantity: number; totalPrice: number; reference: string;
 }): EmailContent {

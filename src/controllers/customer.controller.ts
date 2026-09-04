@@ -2,11 +2,20 @@
 // CUSTOMER CONTROLLER - Multilingual Support
 // ============================================
 import { Request, Response } from "express";
+import fs from "fs";
+import path from "path";
 import { CustomerRepository } from "../repository/customer.repository";
 import { BookingRepository } from "../repository/booking.repository";
 import { Customer } from "../models/customer.model";
-import { I18n } from "../utils/i18n";
+import { I18n, Language } from "../utils/i18n";
 import { verificationResultPage } from "../emails/templates";
+
+// Customer-token requests never carry a role; staff/admin tokens do (see
+// auth.middleware.ts) — the same "self or staff" ownership pattern already
+// used in booking.controller.ts/ticket.controller.ts.
+function isForbidden(req: Request, id: number): boolean {
+    return !req.userRole && req.userId !== id;
+}
 
 export class CustomerController {
     // Create customer (Registration)
@@ -44,9 +53,12 @@ export class CustomerController {
             }
 
 
-            // Validate email format
+            // Validate email format (only when an email was actually
+            // provided — phone-only registration is valid per the check
+            // above; emailRegex.test(undefined) always failed here before,
+            // rejecting every phone-only registration outright).
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(customer.email)) {
+            if (customer.email && !emailRegex.test(customer.email)) {
                 res.status(400).json({
                     status: false,
                     message: I18n.t('invalid_email', lang),
@@ -87,6 +99,11 @@ export class CustomerController {
                     message: I18n.t('invalid_id', lang),
                     code: 400
                 });
+                return;
+            }
+
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
                 return;
             }
 
@@ -144,6 +161,11 @@ export class CustomerController {
                 return;
             }
 
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
+                return;
+            }
+
             const result = await CustomerRepository.update(id, customer);
             console.log('📝 [CustomerController] Update result:', result);
             res.status(result.code).json(result);
@@ -172,6 +194,11 @@ export class CustomerController {
                 return;
             }
 
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
+                return;
+            }
+
             const result = await CustomerRepository.softDelete(id, deleted_by);
             res.status(result.code).json(result);
         } catch (error) {
@@ -194,6 +221,11 @@ export class CustomerController {
                     message: "ID invalide",
                     code: 400
                 });
+                return;
+            }
+
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
                 return;
             }
 
@@ -436,6 +468,41 @@ export class CustomerController {
         }
     }
 
+    // Change password while logged in — operates on req.userId (set by
+    // authMiddleware from the caller's own JWT), never on a URL :id, so
+    // there's no ownership check to get wrong here.
+    static async changePassword(req: Request, res: Response): Promise<void> {
+        try {
+            const { old_password, new_password } = req.body;
+
+            if (!old_password || !new_password) {
+                res.status(400).json({ status: false, message: "old_password et new_password sont requis", code: 400 });
+                return;
+            }
+            if (typeof new_password !== 'string' || new_password.length < 6) {
+                res.status(400).json({ status: false, message: "Le nouveau mot de passe doit contenir au moins 6 caractères", code: 400 });
+                return;
+            }
+
+            const result = await CustomerRepository.changePassword(req.userId!, old_password, new_password);
+            res.status(result.code).json(result);
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+        }
+    }
+
+    // Resend the email-verification link — operates on req.userId, same
+    // reasoning as changePassword above.
+    static async resendVerificationEmail(req: Request, res: Response): Promise<void> {
+        try {
+            const lang = (req.lang as Language) || 'fr';
+            const result = await CustomerRepository.resendVerificationEmail(req.userId!, lang);
+            res.status(result.code).json(result);
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+        }
+    }
+
     // Verify phone
     static async verifyPhone(req: Request, res: Response): Promise<void> {
         try {
@@ -447,6 +514,11 @@ export class CustomerController {
                     message: "ID invalide",
                     code: 400
                 });
+                return;
+            }
+
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
                 return;
             }
 
@@ -751,6 +823,11 @@ export class CustomerController {
                 return;
             }
 
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
+                return;
+            }
+
             if (!req.file) {
                 res.status(400).json({
                     status: false,
@@ -760,6 +837,13 @@ export class CustomerController {
                 return;
             }
 
+            // Read the current picture BEFORE overwriting it, so the old
+            // file can be removed once the new one is confirmed saved.
+            const before = await CustomerRepository.findById(id);
+            const oldProfilePicture = before.status
+                ? (before.body as { profile_picture?: string | null } | undefined)?.profile_picture
+                : undefined;
+
             // Generate URL path for the uploaded file
             const profilePictureUrl = `/uploads/profile-pictures/${req.file.filename}`;
 
@@ -767,6 +851,18 @@ export class CustomerController {
             const result = await CustomerRepository.update(id, {
                 profile_picture: profilePictureUrl
             });
+
+            if (result.status && oldProfilePicture && oldProfilePicture !== profilePictureUrl) {
+                const oldFilePath = path.join(__dirname, '../../uploads/profile-pictures', path.basename(oldProfilePicture));
+                fs.unlink(oldFilePath, (err) => {
+                    // ENOENT (already gone) is fine to ignore — the new
+                    // picture is already saved either way, this must never
+                    // fail the request.
+                    if (err && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+                        console.error('❌ [CustomerController] Failed to delete old profile picture:', err);
+                    }
+                });
+            }
 
             res.status(result.code).json(result);
         } catch (error) {
@@ -792,6 +888,11 @@ export class CustomerController {
                     message: I18n.t('invalid_id', lang),
                     code: 400
                 });
+                return;
+            }
+
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
                 return;
             }
 
@@ -844,6 +945,11 @@ export class CustomerController {
                 return;
             }
 
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
+                return;
+            }
+
             // Remove FCM token by setting it to null
             const result = await CustomerRepository.update(id, {
                 fcm_token: null
@@ -882,6 +988,11 @@ export class CustomerController {
                     message: I18n.t('invalid_id', lang),
                     code: 400
                 });
+                return;
+            }
+
+            if (isForbidden(req, id)) {
+                res.status(403).json({ status: false, message: "Vous ne pouvez agir que sur votre propre compte", code: 403 });
                 return;
             }
 
