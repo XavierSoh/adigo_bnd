@@ -7,8 +7,13 @@ import { Language } from "../utils/i18n";
  * `Language = 'fr' | 'en'` convention and the same fr-first/default
  * ordering as customer.preferred_language's DB default.
  *
- * Visual style matches src/public/index.html (purple/indigo gradient) so a
- * received email and the API's own landing page read as the same product.
+ * Visual style uses ADIGO's actual brand red (#D32F2F, "Rouge Adigo" -
+ * see adigo2/lib/src/design/admin_design_tokens.dart and
+ * adigo_mobile/lib/core/theme/premium_colors.dart, both ported from
+ * adigo_mobile/PREMIUM_DESIGN_SYSTEM.md) so emails, the desktop admin and
+ * the mobile app read as the same product - not the purple/indigo this
+ * file started with, which only ever matched src/public/index.html's own
+ * (unrelated, never-brand-checked) gradient.
  */
 
 export interface EmailContent {
@@ -17,7 +22,8 @@ export interface EmailContent {
     text: string;
 }
 
-const BRAND_GRADIENT = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+const BRAND_GRADIENT = 'linear-gradient(135deg, #FF5252 0%, #D32F2F 100%)'; // same stops as premium_colors.dart's own gradient
+const BRAND_ACCENT = '#D32F2F';
 
 function layout(lang: Language, title: string, bodyHtml: string, footerNote: string): string {
     return `<!DOCTYPE html>
@@ -90,7 +96,7 @@ export function passwordResetEmail(lang: Language, params: { firstName: string; 
             html: layout(lang, 'Password reset code', `
                 <p>Hi ${firstName}, use this code in the app to set a new password:</p>
                 <div style="text-align:center;margin:24px 0;">
-                  <span style="display:inline-block;background:#f0f0f5;border-radius:8px;padding:16px 32px;font-size:28px;font-weight:bold;letter-spacing:6px;color:#764ba2;">${code}</span>
+                  <span style="display:inline-block;background:#f0f0f5;border-radius:8px;padding:16px 32px;font-size:28px;font-weight:bold;letter-spacing:6px;color:${BRAND_ACCENT};">${code}</span>
                 </div>
                 <p style="color:#777;font-size:13px;">This code expires in 30 minutes.</p>
                 <p style="color:#999;font-size:13px;">If you didn't request a password reset, you can ignore this email - your password won't change.</p>
@@ -104,7 +110,7 @@ export function passwordResetEmail(lang: Language, params: { firstName: string; 
         html: layout(lang, 'Code de réinitialisation', `
             <p>Bonjour ${firstName}, utilisez ce code dans l'application pour définir un nouveau mot de passe :</p>
             <div style="text-align:center;margin:24px 0;">
-              <span style="display:inline-block;background:#f0f0f5;border-radius:8px;padding:16px 32px;font-size:28px;font-weight:bold;letter-spacing:6px;color:#764ba2;">${code}</span>
+              <span style="display:inline-block;background:#f0f0f5;border-radius:8px;padding:16px 32px;font-size:28px;font-weight:bold;letter-spacing:6px;color:${BRAND_ACCENT};">${code}</span>
             </div>
             <p style="color:#777;font-size:13px;">Ce code expire dans 30 minutes.</p>
             <p style="color:#999;font-size:13px;">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email - votre mot de passe ne changera pas.</p>
