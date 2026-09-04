@@ -7,6 +7,7 @@ import { migrateBookingCreatedBy } from "./migrate_booking_created_by";
 import { migrateAccessRights } from "./migrate_access_rights";
 import { migrateVtcDriverDocuments } from "./migrate_vtc_driver_documents";
 import { migrateCustomerAuthTokens } from "./migrate_customer_auth_tokens";
+import { migrateEventCodeColumn } from "./migrate_event_code_column";
 
 export const initDb = async () =>  {
     // Créer la base de données si elle n'existe pas
@@ -24,6 +25,7 @@ export const initDb = async () =>  {
     await migrateAccessRights();
     await migrateVtcDriverDocuments();
     await migrateCustomerAuthTokens();
+    await migrateEventCodeColumn();
 
     // Initialiser les données par défaut
     await initFirtsItems();
