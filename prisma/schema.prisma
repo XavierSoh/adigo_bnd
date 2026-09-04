@@ -257,6 +257,7 @@ model customer {
   email_verification_expires_at                                DateTime?             @db.Timestamp(6)
   password_reset_code                                          String?               @db.VarChar(10)
   password_reset_expires_at                                    DateTime?             @db.Timestamp(6)
+  google_id                                                    String?               @unique @db.VarChar(255)
   activity_log                                                 activity_log[]
   booking_booking_created_byTocustomer                         booking[]             @relation("booking_created_byTocustomer")
   booking_booking_customer_idTocustomer                        booking[]             @relation("booking_customer_idTocustomer")

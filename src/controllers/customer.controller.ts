@@ -355,6 +355,24 @@ export class CustomerController {
         }
     }
 
+    // Sign in with Google - body: { id_token }, the token from the mobile
+    // Google Sign-In SDK. Verified server-side, never trusted as-is.
+    static async loginWithGoogle(req: Request, res: Response): Promise<void> {
+        try {
+            const { id_token } = req.body;
+
+            if (!id_token) {
+                res.status(400).json({ status: false, message: "id_token est requis", code: 400 });
+                return;
+            }
+
+            const result = await CustomerRepository.loginWithGoogle(id_token);
+            res.status(result.code).json(result);
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+        }
+    }
+
     // Update loyalty points
     static async updateLoyaltyPoints(req: Request, res: Response): Promise<void> {
         try {

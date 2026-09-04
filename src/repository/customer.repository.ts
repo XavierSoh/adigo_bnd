@@ -8,6 +8,7 @@ import ResponseModel from "../models/response.model";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { OAuth2Client } from "google-auth-library";
 import { requireEnv } from "../utils/env";
 import { sendEmail } from "../services/email.service";
 import { welcomeEmail, passwordResetEmail, passwordChangedEmail } from "../emails/templates";
@@ -573,6 +574,103 @@ export class CustomerRepository {
             };
         } catch (error) {
             return { status: false, message: "Erreur lors de l'authentification", code: 500 };
+        }
+    }
+
+    // "Sign in with Google" - mobile sends the ID token from the Google
+    // Sign-In SDK (verified here server-side against Google's own public
+    // keys via google-auth-library, never trusted as-is). Auto-links to
+    // an existing password-based account sharing the same email (Google
+    // already verified that email's ownership via OAuth, so this is a
+    // legitimate match, not the same class of risk as trusting a
+    // client-asserted email) - creates a new customer otherwise.
+    static async loginWithGoogle(idToken: string): Promise<ResponseModel> {
+        try {
+            const client = new OAuth2Client(requireEnv('GOOGLE_CLIENT_ID'));
+            let payload;
+            try {
+                const ticket = await client.verifyIdToken({
+                    idToken,
+                    audience: requireEnv('GOOGLE_CLIENT_ID'),
+                });
+                payload = ticket.getPayload();
+            } catch (verifyError) {
+                return { status: false, message: "Jeton Google invalide", code: 401 };
+            }
+
+            if (!payload || !payload.email) {
+                return { status: false, message: "Jeton Google invalide", code: 401 };
+            }
+            if (!payload.email_verified) {
+                return { status: false, message: "Email Google non vérifié", code: 401 };
+            }
+
+            const googleId = payload.sub;
+            let customer = await prismaDb.customer.findFirst({
+                where: { is_deleted: false, OR: [{ google_id: googleId }, { email: payload.email }] },
+                select: { ...findByIdSelect, google_id: true },
+            });
+
+            if (customer) {
+                if (customer.account_status !== 'active') {
+                    return { status: false, message: `Compte ${customer.account_status}`, code: 403 };
+                }
+                if (!customer.google_id) {
+                    // Existing password-based account, first time signing
+                    // in with Google - link it rather than creating a
+                    // duplicate.
+                    await prismaDb.customer.update({
+                        where: { id: customer.id },
+                        data: { google_id: googleId, email_verified: true, last_login: new Date() },
+                    });
+                } else {
+                    await prismaDb.customer.update({
+                        where: { id: customer.id },
+                        data: { last_login: new Date() },
+                    });
+                }
+            } else {
+                // New account - password column is NOT NULL with no
+                // Google-specific null path added (a bigger schema change
+                // than this needs); store an unusable random hash instead.
+                // The account works exclusively through Google sign-in
+                // until/unless the customer sets a real password via the
+                // forgot-password flow.
+                const randomPassword = crypto.randomBytes(32).toString('hex');
+                const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+                customer = await prismaDb.customer.create({
+                    data: {
+                        first_name: payload.given_name || payload.name || 'Google',
+                        last_name: payload.family_name || 'User',
+                        email: payload.email,
+                        password: hashedPassword,
+                        google_id: googleId,
+                        email_verified: true, // Google already verified it
+                        account_status: 'active',
+                        preferred_language: 'fr',
+                    },
+                    select: { ...findByIdSelect, google_id: true },
+                });
+            }
+
+            const token = jwt.sign(
+                { customerId: customer.id, email: customer.email },
+                requireEnv('JWT_SECRET'),
+                { expiresIn: '7d' }
+            );
+
+            const { google_id, ...customerWithoutGoogleId } = customer;
+
+            return {
+                status: true,
+                message: "Connexion réussie",
+                body: { customer: customerWithoutGoogleId, token },
+                code: 200,
+            };
+        } catch (error) {
+            console.error('❌ [CustomerRepository] Error in loginWithGoogle:', error);
+            return { status: false, message: "Erreur lors de la connexion Google", code: 500 };
         }
     }
 

@@ -14,6 +14,7 @@ const customerRouter = Router();
 // legitimately need to work before a token exists.
 // ============================================
 customerRouter.post("/login", CustomerController.login);
+customerRouter.post("/login-google", CustomerController.loginWithGoogle);
 customerRouter.post("/register", CustomerController.create);
 customerRouter.post("/", CustomerController.create); // dup of /register, kept public unchanged
 
