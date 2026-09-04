@@ -32,10 +32,17 @@ export interface InitiatePaymentParams {
     metadata?: Record<string, any>;
 }
 
+// Orange Money's own API rejects OrderId over 20 characters (confirmed via
+// a live 422: "The OrderId field must be at most 20 characters long." -
+// the previous ADG-<purpose>-<timestamp>-<random> format ran ~30 chars and
+// silently failed every real Orange Money payment). No separators needed
+// to stay unique within that budget: <=3 char purpose + base36 timestamp
+// (~8 chars today) + 3 char random comfortably fits under 20.
 function generateOrderId(purpose: PaymentPurpose): string {
-    const shortPurpose = purpose.replace(/[^a-zA-Z]/g, '').slice(0, 6).toUpperCase();
-    const random = Math.random().toString(36).slice(2, 7).toUpperCase();
-    return `ADG-${shortPurpose}-${Date.now()}-${random}`.slice(0, 50);
+    const shortPurpose = purpose.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 5).toUpperCase();
+    return `${shortPurpose}${timestamp}${random}`.slice(0, 20);
 }
 
 export class PaymentService {
