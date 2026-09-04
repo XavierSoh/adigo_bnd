@@ -16,6 +16,7 @@ export interface Customer {
     id_card_type?: 'cni' | 'passport' | 'driver_license';
     preferred_language?: 'fr' | 'en';
     notification_enabled?: boolean;
+    reminder_minutes_before?: number;  // Trip-departure push reminder lead time (minutes), default 15, 0 = disabled
     preferred_seat_type?: 'window' | 'aisle';
     loyalty_points?: number;
     customer_tier?: 'regular' | 'silver' | 'gold' | 'platinum';

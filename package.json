@@ -515,7 +515,9 @@
     "build": "tsc && node scripts/copy-assets.js",
     "start": "node dist/src/index.js",
     "dev": "nodemon --ext ts,json --exec ts-node src/index.ts",
-    "test": "jest"
+    "test": "jest",
+    "seed": "ts-node prisma/seeds/seed.ts",
+    "seed:clean": "ts-node prisma/seeds/seed-clean.ts"
   },
   "repository": {
     "type": "git",

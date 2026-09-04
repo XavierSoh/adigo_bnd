@@ -185,6 +185,50 @@ export function ticketPurchaseConfirmedEmail(lang: Language, params: {
     };
 }
 
+/**
+ * Internal notification to ADIGO's own administration (contact@adigolimited.com)
+ * for business-significant events on booking/ticketing/payments (created,
+ * cancelled, paid...) - NOT sent to the customer. Per the user's explicit
+ * choice, this follows the SAME language as the customer the event is
+ * about (like every other template here) rather than always French -
+ * AdminNotificationService resolves `heading`/`lines` to the right
+ * language before calling this, this function just lays them out.
+ */
+export function adminNotificationEmail(lang: Language, params: {
+    icon?: string;
+    heading: string;
+    lines: Array<[string, string]>;
+}): EmailContent {
+    const { icon = '🔔', heading, lines } = params;
+    const footerNote = lang === 'en'
+        ? 'Automatic internal notification - booking/ticketing/payments module.'
+        : 'Notification interne automatique - module booking/ticketing/paiements.';
+    const receivedLabel = lang === 'en' ? 'Received' : 'Reçu le';
+    const timestamp = new Date().toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR', {
+        dateStyle: 'medium', timeStyle: 'short',
+    });
+
+    const rowsHtml = lines.map(([label, value], i) => `
+        <tr>
+          <td style="padding:10px 16px 10px 0;color:#8a8a92;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;white-space:nowrap;vertical-align:top;${i > 0 ? 'border-top:1px solid #ececf2;' : ''}">${label}</td>
+          <td style="padding:10px 0;color:#222;font-size:14px;font-weight:600;text-align:right;${i > 0 ? 'border-top:1px solid #ececf2;' : ''}">${value}</td>
+        </tr>`).join('');
+    const text = `${heading}\n\n` + lines.map(([label, value]) => `${label}: ${value}`).join('\n') + `\n\n${receivedLabel}: ${timestamp}`;
+
+    return {
+        subject: `[ADIGO] ${icon} ${heading}`,
+        text,
+        html: layout(lang, `${icon} ${heading}`, `
+            <div style="background:#f7f7fb;border-left:4px solid ${BRAND_ACCENT};border-radius:8px;padding:4px 20px;margin:8px 0 4px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                ${rowsHtml}
+              </table>
+            </div>
+            <p style="color:#bbb;font-size:12px;margin:16px 2px 0;">${receivedLabel} : ${timestamp}</p>
+        `, footerNote),
+    };
+}
+
 export function verificationResultPage(lang: Language, ok: boolean): string {
     const title = ok
         ? (lang === 'en' ? 'Email confirmed!' : 'Email confirmé !')

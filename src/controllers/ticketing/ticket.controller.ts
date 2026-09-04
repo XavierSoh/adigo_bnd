@@ -4,6 +4,7 @@ import { TicketTypeRepository } from "../../repository/ticketing/ticket-type.rep
 import { CustomerRepository } from "../../repository/customer.repository";
 import { WalletRepository } from "../../repository/wallet.repository";
 import { PaymentService } from "../../services/payment/payment.service";
+import { AdminNotificationService, AdminLabel } from "../../services/adminNotification.service";
 import { sendEmail } from "../../services/email.service";
 import { ticketPurchaseConfirmedEmail } from "../../emails/templates";
 import { Language } from "../../utils/i18n";
@@ -132,6 +133,23 @@ export class TicketController {
                 await TicketRepository.markWalletPaid(ticket.id, `wallet-${ticket.reference}`);
                 await TicketTypeRepository.incrementSold(ticket.ticket_type_id, ticket.quantity);
                 TicketController.sendConfirmationEmail(ticket.id, lang).catch(() => { /* logged in email.service */ });
+                TicketRepository.findForEmail(ticket.id).then((forEmail) => {
+                    if (!forEmail) return;
+                    AdminNotificationService.notify({
+                        lang: (forEmail.customer.preferred_language as Language) === 'en' ? 'en' : 'fr',
+                        icon: '🎟️',
+                        heading: { fr: "Nouveau billet vendu", en: "New ticket sold" },
+                        lines: [
+                            [AdminLabel.customerName, forEmail.customer.first_name],
+                            [AdminLabel.customerEmail, forEmail.customer.email || '-'],
+                            [AdminLabel.event, forEmail.event.title],
+                            [AdminLabel.ticket, ticket.reference],
+                            [AdminLabel.quantity, String(ticket.quantity)],
+                            [AdminLabel.amount, `${totalPrice} XAF`],
+                            [AdminLabel.payment, 'Wallet'],
+                        ],
+                    });
+                }).catch(() => { /* logged in adminNotification.service */ });
 
                 const finalTicket = await TicketRepository.findById(ticket.id);
                 res.status(201).json(finalTicket);
@@ -170,10 +188,19 @@ export class TicketController {
                     return;
                 }
 
+                // `body` must be the flat ticket (same shape as the wallet/cash
+                // paths) - the mobile client parses `body` directly as an
+                // EventTicketPurchase. Nesting it under `{ticket, payment}`
+                // here previously made every field (id included) silently
+                // default to 0/empty, sending the app to a nonexistent
+                // ticket detail page right after a successful Orange Money
+                // payment. `payment` (payToken/status) rides alongside at
+                // the top level instead, for any caller that wants it.
                 res.status(201).json({
                     status: true,
                     message: "Paiement Orange Money initié - confirmez sur votre téléphone",
-                    body: { ticket, payment: paymentResult.body },
+                    body: ticket,
+                    payment: paymentResult.body,
                     code: 201,
                 });
                 return;
@@ -208,6 +235,19 @@ export class TicketController {
     static async confirmPayment(req: Request, res: Response) {
         const { id } = req.params as { id: string };
         const response = await TicketRepository.confirmPayment(parseInt(id), req.body);
+        if (response.status) {
+            const ticket = response.body as { id: number; reference: string; customer_id: number; total_price: number; payment_method: string };
+            AdminNotificationService.notify({
+                customerId: ticket.customer_id,
+                icon: '💵',
+                heading: { fr: "Paiement cash confirmé (billet)", en: "Cash payment confirmed (ticket)" },
+                lines: [
+                    [AdminLabel.ticket, ticket.reference],
+                    [AdminLabel.customerId, String(ticket.customer_id)],
+                    [AdminLabel.amount, `${ticket.total_price} XAF`],
+                ],
+            });
+        }
         res.status(response.code).json(response);
     }
 
@@ -234,6 +274,19 @@ export class TicketController {
             }
         }
         const response = await TicketRepository.cancel(parseInt(id));
+        if (response.status && existing.status) {
+            const ticket = existing.body as { reference: string; customer_id: number; total_price: number };
+            AdminNotificationService.notify({
+                customerId: ticket.customer_id,
+                icon: '❌',
+                heading: { fr: "Billet annulé", en: "Ticket cancelled" },
+                lines: [
+                    [AdminLabel.ticket, ticket.reference],
+                    [AdminLabel.customerId, String(ticket.customer_id)],
+                    [AdminLabel.amount, `${ticket.total_price} XAF`],
+                ],
+            });
+        }
         res.status(response.code).json(response);
     }
 }

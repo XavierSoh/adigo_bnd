@@ -17,6 +17,7 @@ import { PaymentTransactionRepository } from "../../repository/payment-transacti
 import { PaymentPurpose, PaymentTransaction } from "../../models/payment-transaction.model";
 import { getPaymentProvider, PaymentProviderName } from "./payment-provider.registry";
 import { runSettlement } from "./payment-settlement.registry";
+import { AdminNotificationService, AdminLabel } from "../adminNotification.service";
 import ResponseModel from "../../models/response.model";
 
 export interface InitiatePaymentParams {
@@ -131,6 +132,19 @@ export class PaymentService {
             if (claim.status) {
                 const settledTransaction = claim.body as PaymentTransaction;
                 await runSettlement(settledTransaction);
+                // One place for every Orange-Money-confirmed payment
+                // (booking, ticket purchase, wallet top-up...) instead of a
+                // duplicate hook in each settlement handler.
+                AdminNotificationService.notify({
+                    customerId: settledTransaction.customer_id,
+                    heading: { fr: "Paiement Orange Money confirmé", en: "Orange Money payment confirmed" },
+                    lines: [
+                        [AdminLabel.purpose, settledTransaction.purpose],
+                        [AdminLabel.amount, `${settledTransaction.amount} XAF`],
+                        [AdminLabel.customerId, String(settledTransaction.customer_id)],
+                        [AdminLabel.reference, settledTransaction.order_id],
+                    ],
+                });
                 return { status: true, message: "Paiement confirmé", body: settledTransaction, code: 200 };
             }
             // Someone else (webhook or a concurrent poll) already claimed it — not an error.

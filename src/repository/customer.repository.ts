@@ -12,7 +12,7 @@ import { OAuth2Client } from "google-auth-library";
 import { requireEnv } from "../utils/env";
 import { sendEmail } from "../services/email.service";
 import { welcomeEmail, passwordResetEmail, passwordChangedEmail } from "../emails/templates";
-import { Language } from "../utils/i18n";
+import { I18n, Language } from "../utils/i18n";
 
 // Field sets kept identical to the two different RETURNING/SELECT column
 // lists the original raw SQL used (findById's list and update's list are
@@ -23,7 +23,7 @@ const findByIdSelect = {
     id: true, first_name: true, last_name: true, email: true, phone: true,
     date_of_birth: true, gender: true, address: true, city: true,
     id_card_number: true, id_card_type: true, preferred_language: true,
-    notification_enabled: true, preferred_seat_type: true, loyalty_points: true,
+    notification_enabled: true, reminder_minutes_before: true, preferred_seat_type: true, loyalty_points: true,
     customer_tier: true, account_status: true, email_verified: true, phone_verified: true,
     profile_picture: true, wallet_balance: true, fcm_token: true,
     created_at: true, updated_at: true, last_login: true,
@@ -33,7 +33,7 @@ const updateReturnSelect = {
     id: true, first_name: true, last_name: true, email: true, phone: true,
     date_of_birth: true, gender: true, address: true, city: true,
     id_card_number: true, id_card_type: true, preferred_language: true,
-    notification_enabled: true, preferred_seat_type: true, loyalty_points: true,
+    notification_enabled: true, reminder_minutes_before: true, preferred_seat_type: true, loyalty_points: true,
     customer_tier: true, account_status: true, email_verified: true, phone_verified: true,
     profile_picture: true, wallet_balance: true, default_orange_money_number: true,
     default_mtn_mobile_money_number: true,
@@ -290,7 +290,15 @@ export class CustomerRepository {
     }
 
     // Find by ID
-    static async findById(id: number): Promise<ResponseModel> {
+    // lang defaults to 'en' here (unlike this file's email-template `lang`
+    // params, which default to 'fr') — this return value is a JSON API
+    // response, not an email, and must match the rest of the app's
+    // (English-default) request-language convention. Called from the
+    // booking flow (BookingController.createMultiple/create), which is why
+    // this one message pair — of the many hardcoded-French ones in this
+    // file — is translated: flagged as in scope for "the booking module
+    // must be fully bilingual", the rest of this file's messages are not.
+    static async findById(id: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const customer = await prismaDb.customer.findFirst({
                 where: { id, is_deleted: false },
@@ -298,13 +306,13 @@ export class CustomerRepository {
             });
 
             if (!customer) {
-                return { status: false, message: "Client non trouvé", code: 404 };
+                return { status: false, message: I18n.t('customer_not_found', lang), code: 404 };
             }
 
-            return { status: true, message: "Client trouvé", body: customer, code: 200 };
+            return { status: true, message: I18n.t('customer_found', lang), body: customer, code: 200 };
         } catch (error) {
             console.error(`❌ [CustomerRepository] Error in findById:`, error);
-            return { status: false, message: "Erreur lors de la recherche du client", code: 500 };
+            return { status: false, message: I18n.t('customer_fetch_error', lang), code: 500 };
         }
     }
 
@@ -370,6 +378,13 @@ export class CustomerRepository {
             if (customer.id_card_type != null) data.id_card_type = customer.id_card_type;
             if (customer.preferred_language != null) data.preferred_language = customer.preferred_language;
             if (customer.notification_enabled != null) data.notification_enabled = customer.notification_enabled;
+            // reminder_minutes_before: user-configurable trip-departure
+            // reminder lead time (minutes), default 15 — see
+            // migrations/booking_push_notifications.sql / bookingNotification.service.ts.
+            // 0 is a valid, meaningful value (disables just the reminder),
+            // so this checks undefined, not the customer.* != null pattern
+            // used above (which would also reject 0).
+            if (customer.reminder_minutes_before !== undefined) data.reminder_minutes_before = customer.reminder_minutes_before;
             if (customer.preferred_seat_type != null) data.preferred_seat_type = customer.preferred_seat_type;
             if (customer.profile_picture != null) data.profile_picture = customer.profile_picture;
             if (customer.default_orange_money_number != null) data.default_orange_money_number = customer.default_orange_money_number;
@@ -924,7 +939,8 @@ export class CustomerRepository {
     }
 
     // Get wallet balance
-    static async getWalletBalance(customerId: number): Promise<ResponseModel> {
+    // Same in-scope-for-booking note as findById above.
+    static async getWalletBalance(customerId: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const result = await prismaDb.customer.findFirst({
                 where: { id: customerId, is_deleted: false },
@@ -932,12 +948,12 @@ export class CustomerRepository {
             });
 
             if (!result) {
-                return { status: false, message: "Client non trouvé", code: 404 };
+                return { status: false, message: I18n.t('customer_not_found', lang), code: 404 };
             }
 
-            return { status: true, message: "Solde récupéré", body: { balance: result.wallet_balance || 0 }, code: 200 };
+            return { status: true, message: I18n.t('wallet_balance_retrieved', lang), body: { balance: result.wallet_balance || 0 }, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération du solde", code: 500 };
+            return { status: false, message: I18n.t('wallet_balance_fetch_error', lang), code: 500 };
         }
     }
 

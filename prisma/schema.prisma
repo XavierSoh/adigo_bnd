@@ -113,6 +113,7 @@ model booking {
   deleted_at                             DateTime?           @db.Timestamp(6)
   deleted_by                             Int?
   group_id                               String?             @db.VarChar(50)
+  reminder_sent_at                       DateTime?           @db.Timestamp(6)
   customer_booking_created_byTocustomer  customer            @relation("booking_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customer_booking_customer_idTocustomer customer            @relation("booking_customer_idTocustomer", fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                  users?              @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -258,6 +259,7 @@ model customer {
   password_reset_code                                          String?               @db.VarChar(10)
   password_reset_expires_at                                    DateTime?             @db.Timestamp(6)
   google_id                                                    String?               @unique @db.VarChar(255)
+  reminder_minutes_before                                      Int?                  @default(15)
   activity_log                                                 activity_log[]
   booking_booking_created_byTocustomer                         booking[]             @relation("booking_created_byTocustomer")
   booking_booking_customer_idTocustomer                        booking[]             @relation("booking_customer_idTocustomer")

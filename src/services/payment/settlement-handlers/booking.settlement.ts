@@ -3,6 +3,7 @@
 import { registerSettlementHandler } from "../payment-settlement.registry";
 import { BookingRepository } from "../../../repository/booking.repository";
 import { TierService } from "../../tier.service";
+import { BookingNotificationService } from "../../bookingNotification.service";
 import prismaDb from "../../../config/prismaClient";
 
 /**
@@ -61,5 +62,10 @@ registerSettlementHandler('booking', async (transaction) => {
                 `Booking ${confirmed.booking_reference || confirmed.id}`
             );
         }
+        // Best-effort push — never let a notification failure affect the
+        // settlement itself (already committed above).
+        BookingNotificationService.sendBookingConfirmed(id).catch((err) =>
+            console.error(`⚠️ Warning: booking_confirmed push failed for booking ${id}:`, err)
+        );
     }
 });

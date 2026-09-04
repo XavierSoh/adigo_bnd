@@ -9,6 +9,8 @@ import { I18n } from "../utils/i18n";
 import { calculateTierDiscount } from "../config/tier.config";
 import { SocketService } from "../services/socket.service";
 import { PaymentService } from "../services/payment/payment.service";
+import { BookingNotificationService } from "../services/bookingNotification.service";
+import { AdminNotificationService, AdminLabel } from "../services/adminNotification.service";
 
 export class BookingController {
     /**
@@ -27,7 +29,7 @@ export class BookingController {
     static async initiateOrangeMoneyPayment(req: Request, res: Response): Promise<void> {
         try {
             if (!req.userId) {
-                res.status(401).json({ status: false, message: "Unauthorized", code: 401 });
+                res.status(401).json({ status: false, message: I18n.t('unauthorized', req.lang), code: 401 });
                 return;
             }
 
@@ -36,7 +38,7 @@ export class BookingController {
             if (!generated_trip_id || !generated_trip_seat_id || !total_price || !subscriber_msisdn) {
                 res.status(400).json({
                     status: false,
-                    message: "generated_trip_id, generated_trip_seat_id, total_price et subscriber_msisdn sont requis",
+                    message: I18n.t('orange_money_booking_fields_required', req.lang),
                     code: 400
                 });
                 return;
@@ -44,12 +46,14 @@ export class BookingController {
 
             const availabilityCheck = await BookingRepository.checkSeatAvailability(
                 generated_trip_id,
-                generated_trip_seat_id
+                generated_trip_seat_id,
+                undefined,
+                req.lang
             );
             if (availabilityCheck.body && !(availabilityCheck.body as any).available) {
                 res.status(409).json({
                     status: false,
-                    message: "Ce siège est déjà réservé pour ce voyage",
+                    message: I18n.t('this_seat_already_booked', req.lang),
                     code: 409
                 });
                 return;
@@ -63,7 +67,7 @@ export class BookingController {
                 payment_method: "orangeMoney",
                 status: "pending",
                 booking_date: new Date().toISOString(),
-            } as unknown as Booking);
+            } as unknown as Booking, req.lang);
 
             if (!createResult.status) {
                 res.status(createResult.code).json(createResult);
@@ -85,7 +89,7 @@ export class BookingController {
                 await BookingRepository.update(booking.id, {
                     status: "cancelled",
                     cancellation_reason: paymentResult.message,
-                } as Partial<Booking>);
+                } as Partial<Booking>, req.lang);
                 res.status(paymentResult.code).json(paymentResult);
                 return;
             }
@@ -97,7 +101,7 @@ export class BookingController {
                 code: 200
             });
         } catch (error) {
-            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+            res.status(500).json({ status: false, message: I18n.t('server_error', req.lang), code: 500 });
         }
     }
 
@@ -123,7 +127,7 @@ export class BookingController {
             if (!req.userRole && req.userId !== Number(customer_id)) {
                 res.status(403).json({
                     status: false,
-                    message: "Vous ne pouvez réserver que pour votre propre compte",
+                    message: I18n.t('booking_own_account_only', req.lang),
                     code: 403
                 });
                 return;
@@ -135,7 +139,7 @@ export class BookingController {
             if (payment_method === 'mtn') {
                 res.status(400).json({
                     status: false,
-                    message: "MTN Mobile Money n'est pas encore disponible. Choisissez Orange Money, le portefeuille Adigo, ou le paiement en espèces.",
+                    message: I18n.t('mtn_momo_unavailable', req.lang),
                     code: 400
                 });
                 return;
@@ -149,7 +153,7 @@ export class BookingController {
             console.log(`🆔 [BookingController] Generated group_id: ${group_id}`);
 
             // Get customer tier for discount calculation
-            const customerData = await CustomerRepository.findById(customer_id);
+            const customerData = await CustomerRepository.findById(customer_id, req.lang);
             if (!customerData.status) {
                 res.status(customerData.code).json(customerData);
                 return;
@@ -164,7 +168,7 @@ export class BookingController {
             if (payment_method === 'orangeMoney' && !orangeMoneyMsisdn) {
                 res.status(400).json({
                     status: false,
-                    message: "Le numéro Orange Money du client est requis (aucun numéro enregistré sur son profil)",
+                    message: I18n.t('orange_money_number_required', req.lang),
                     code: 400
                 });
                 return;
@@ -186,7 +190,7 @@ export class BookingController {
                 // Calculate total price for all seats first (with tier discount applied)
                 let estimatedTotal = 0;
                 for (const seat of seats) {
-                    const available = await BookingRepository.checkSeatAvailability(generated_trip_id, seat.generated_trip_seat_id);
+                    const available = await BookingRepository.checkSeatAvailability(generated_trip_id, seat.generated_trip_seat_id, undefined, req.lang);
                     if (!available.body || !(available.body as any).available) {
                         res.status(409).json({ status: false, message: `Siège ${seat.generated_trip_seat_id} déjà réservé`, code: 409 });
                         return;
@@ -198,7 +202,7 @@ export class BookingController {
                 }
 
                 // Get current wallet balance
-                const balanceCheck = await CustomerRepository.getWalletBalance(customer_id);
+                const balanceCheck = await CustomerRepository.getWalletBalance(customer_id, req.lang);
                 if (!balanceCheck.status) {
                     res.status(balanceCheck.code).json(balanceCheck);
                     return;
@@ -222,7 +226,7 @@ export class BookingController {
 
             for (const seat of seats) {
                 // Vérifier la disponibilité du siège
-                const available = await BookingRepository.checkSeatAvailability(generated_trip_id, seat.generated_trip_seat_id);
+                const available = await BookingRepository.checkSeatAvailability(generated_trip_id, seat.generated_trip_seat_id, undefined, req.lang);
                 if (!available.body || !(available.body as any).available) {
                     res.status(409).json({ status: false, message: `Siège ${seat.generated_trip_seat_id} déjà réservé`, code: 409 });
                     return;
@@ -252,9 +256,9 @@ export class BookingController {
                     total_price: finalPrice,
                     group_id
                 };
-                const result = await BookingRepository.create(booking);
+                const result = await BookingRepository.create(booking, req.lang);
                 if (!result.status) {
-                    res.status(500).json({ status: false, message: "Erreur lors de la réservation", code: 500 });
+                    res.status(500).json({ status: false, message: I18n.t('booking_error', req.lang), code: 500 });
                     return;
                 }
                 const bookingResult = result.body as Booking;
@@ -286,10 +290,12 @@ export class BookingController {
 
                 if (!paymentResult.status) {
                     // If payment fails, we should ideally rollback bookings
-                    // For now, just return error
+                    // For now, just return error. paymentResult.message
+                    // isn't language-aware — always use the localized
+                    // message, never the raw English one.
                     res.status(500).json({
                         status: false,
-                        message: paymentResult.message || I18n.t('bookings_created_wallet_error', req.lang),
+                        message: I18n.t('bookings_created_wallet_error', req.lang),
                         code: 500
                     });
                     return;
@@ -317,7 +323,7 @@ export class BookingController {
                     await BookingRepository.cancelBatch(
                         bookings.map(b => b.id),
                         paymentResult.message || 'Échec initiation paiement Orange Money'
-                    );
+                    , req.lang);
                     res.status(paymentResult.code).json(paymentResult);
                     return;
                 }
@@ -325,7 +331,7 @@ export class BookingController {
             }
 
             // Fetch complete booking details with all related data
-            const detailedBookings = await BookingRepository.findByGroupId(group_id);
+            const detailedBookings = await BookingRepository.findByGroupId(group_id, req.lang);
 
             // Broadcast new booking notification to dashboard
             const bookingData = {
@@ -341,10 +347,49 @@ export class BookingController {
                 console.error('Error broadcasting booking:', err)
             );
 
+            // Best-effort push, never blocks the response. Only for
+            // wallet/cash — Orange Money bookings are still 'pending' here
+            // and get their booking_confirmed push from the settlement
+            // handler once the charge is actually verified.
+            if (payment_method !== 'orangeMoney') {
+                for (const b of bookings) {
+                    BookingNotificationService.sendBookingConfirmed(b.id).catch((err) =>
+                        console.error(`⚠️ Warning: booking_confirmed push failed for booking ${b.id}:`, err)
+                    );
+                }
+                // One summary email for the whole batch, not one per seat -
+                // enriched with the detailed rows just fetched above
+                // (customer contact, trip, seat numbers), not just raw ids.
+                const detailRows = (detailedBookings.status ? detailedBookings.body : []) as Array<{
+                    customer: { first_name: string; last_name: string; phone: string | null; email: string | null; preferred_language: string | null };
+                    generated_trip: { departure_city: string | null; arrival_city: string | null; actual_departure_time: string | Date | null } | null;
+                    generated_trip_seat: { seat: { seat_number: string } } | null;
+                }>;
+                const first = detailRows[0];
+                const seatNumbers = detailRows.map(b => b.generated_trip_seat?.seat?.seat_number).filter(Boolean).join(', ');
+                AdminNotificationService.notify({
+                    lang: first?.customer?.preferred_language === 'en' ? 'en' : 'fr',
+                    icon: '🚌',
+                    heading: { fr: "Nouvelle réservation", en: "New booking" },
+                    lines: [
+                        [AdminLabel.customerName, first ? `${first.customer.first_name} ${first.customer.last_name}` : String(customer_id)],
+                        [AdminLabel.customerPhone, first?.customer?.phone || '-'],
+                        [AdminLabel.customerEmail, first?.customer?.email || '-'],
+                        [AdminLabel.trip, first?.generated_trip ? `${first.generated_trip.departure_city} → ${first.generated_trip.arrival_city}` : '-'],
+                        [AdminLabel.tripDate, first?.generated_trip?.actual_departure_time ? new Date(first.generated_trip.actual_departure_time).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : '-'],
+                        [AdminLabel.seats, String(bookings.length)],
+                        [AdminLabel.seatNumbers, seatNumbers || '-'],
+                        [AdminLabel.totalAmount, `${totalPrice} XAF`],
+                        [AdminLabel.payment, payment_method],
+                        [AdminLabel.group, String(group_id)],
+                    ],
+                });
+            }
+
             res.status(201).json({
                 status: true,
                 message: paymentInfo
-                    ? "Réservation en attente — confirmez le paiement sur votre téléphone"
+                    ? I18n.t('booking_pending_orange_money_confirmation', req.lang)
                     : I18n.t('bookings_created', req.lang),
                 bookings: detailedBookings.status ? detailedBookings.body : bookings,
                 total_price: totalPrice,
@@ -353,7 +398,7 @@ export class BookingController {
                 code: 201
             });
         } catch (error) {
-            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+            res.status(500).json({ status: false, message: I18n.t('server_error', req.lang), code: 500 });
         }
     }
     // Create new booking
@@ -365,7 +410,7 @@ export class BookingController {
             if (!booking.generated_trip_id || !booking.customer_id || !booking.generated_trip_seat_id) {
                 res.status(400).json({
                     status: false,
-                    message: "generated_trip_id, customer_id et generated_trip_seat_id sont requis",
+                    message: I18n.t('booking_create_fields_required', req.lang),
                     code: 400
                 });
                 return;
@@ -374,7 +419,7 @@ export class BookingController {
             if (!req.userRole && req.userId !== Number(booking.customer_id)) {
                 res.status(403).json({
                     status: false,
-                    message: "Vous ne pouvez réserver que pour votre propre compte",
+                    message: I18n.t('booking_own_account_only', req.lang),
                     code: 403
                 });
                 return;
@@ -383,20 +428,22 @@ export class BookingController {
             // Check seat availability
             const availabilityCheck = await BookingRepository.checkSeatAvailability(
                 booking.generated_trip_id,
-                booking.generated_trip_seat_id
+                booking.generated_trip_seat_id,
+                undefined,
+                req.lang
             );
 
             if (availabilityCheck.body && !(availabilityCheck.body as any).available) {
                 res.status(409).json({
                     status: false,
-                    message: "Ce siège est déjà réservé pour ce voyage",
+                    message: I18n.t('this_seat_already_booked', req.lang),
                     code: 409
                 });
                 return;
             }
 
             // Get customer tier and apply discount to booking price
-            const customerData = await CustomerRepository.findById(booking.customer_id);
+            const customerData = await CustomerRepository.findById(booking.customer_id, req.lang);
             if (!customerData.status) {
                 res.status(customerData.code).json(customerData);
                 return;
@@ -419,7 +466,7 @@ export class BookingController {
             // with the wallet never actually charged, silently, with no
             // error reaching the client at all.
             if (booking.payment_method === 'wallet' && booking.total_price > 0) {
-                const balanceCheck = await CustomerRepository.getWalletBalance(booking.customer_id);
+                const balanceCheck = await CustomerRepository.getWalletBalance(booking.customer_id, req.lang);
                 if (!balanceCheck.status) {
                     res.status(balanceCheck.code).json(balanceCheck);
                     return;
@@ -440,7 +487,7 @@ export class BookingController {
             }
 
             // Create the booking
-            const result = await BookingRepository.create(booking);
+            const result = await BookingRepository.create(booking, req.lang);
 
             if (!result.status) {
                 res.status(result.code).json(result);
@@ -462,10 +509,13 @@ export class BookingController {
                     // failed (race with another concurrent charge, DB
                     // error...) — undo the booking rather than leave it
                     // confirmed unpaid.
-                    await BookingRepository.softDelete(createdBooking.id, booking.created_by);
+                    await BookingRepository.softDelete(createdBooking.id, booking.created_by, req.lang);
+                    // paymentResult.message isn't language-aware — always
+                    // use the localized message, never the raw English one
+                    // that used to win via `||`.
                     res.status(400).json({
                         status: false,
-                        message: paymentResult.message || I18n.t('insufficient_wallet_balance', req.lang, {
+                        message: I18n.t('insufficient_wallet_balance', req.lang, {
                             current: '?',
                             required: booking.total_price.toString()
                         }),
@@ -475,11 +525,34 @@ export class BookingController {
                 }
             }
 
+            // Best-effort push, never blocks the response — this endpoint
+            // has no pending/orangeMoney branch of its own (that's
+            // initiateOrangeMoneyPayment below), so the booking is already
+            // 'confirmed' by the time we get here.
+            const confirmedBooking = result.body as Booking;
+            BookingNotificationService.sendBookingConfirmed(confirmedBooking.id!).catch((err) =>
+                console.error(`⚠️ Warning: booking_confirmed push failed for booking ${confirmedBooking.id}:`, err)
+            );
+            const bookingCustomer = customerData.body as { first_name: string; last_name: string; phone: string | null; email: string | null; preferred_language: string | null };
+            AdminNotificationService.notify({
+                lang: bookingCustomer.preferred_language === 'en' ? 'en' : 'fr',
+                icon: '🚌',
+                heading: { fr: "Nouvelle réservation", en: "New booking" },
+                lines: [
+                    [AdminLabel.customerName, `${bookingCustomer.first_name} ${bookingCustomer.last_name}`],
+                    [AdminLabel.customerPhone, bookingCustomer.phone || '-'],
+                    [AdminLabel.customerEmail, bookingCustomer.email || '-'],
+                    [AdminLabel.booking, confirmedBooking.booking_reference || `#${confirmedBooking.id}`],
+                    [AdminLabel.amount, `${booking.total_price} XAF`],
+                    [AdminLabel.payment, booking.payment_method],
+                ],
+            });
+
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -493,18 +566,18 @@ export class BookingController {
             if (isNaN(id)) {
                 res.status(400).json({
                     status: false,
-                    message: "ID invalide",
+                    message: I18n.t('invalid_id', req.lang),
                     code: 400
                 });
                 return;
             }
 
-            const result = await BookingRepository.findById(id);
+            const result = await BookingRepository.findById(id, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -530,33 +603,33 @@ export class BookingController {
             if (with_details === 'true') {
                 result = await BookingRepository.findAllWithDetails(
                     agency_id ? parseInt(agency_id as string) : undefined
-                );
+                , req.lang);
             } else if (group_id) {
-                result = await BookingRepository.findByGroupId(group_id as string);
+                result = await BookingRepository.findByGroupId(group_id as string, req.lang);
             } else if (agency_id) {
-                result = await BookingRepository.findByAgency(parseInt(agency_id as string));
+                result = await BookingRepository.findByAgency(parseInt(agency_id as string), req.lang);
             } else if (trip_id) {
                 if (status) {
                     result = await BookingRepository.findByTripAndStatus(
                         parseInt(trip_id as string),
                         status as string
-                    );
+                    , req.lang);
                 } else {
-                    result = await BookingRepository.findByTrip(parseInt(trip_id as string));
+                    result = await BookingRepository.findByTrip(parseInt(trip_id as string), req.lang);
                 }
             } else if (user_id) {
-                result = await BookingRepository.findByUser(parseInt(user_id as string));
+                result = await BookingRepository.findByUser(parseInt(user_id as string), req.lang);
             } else if (status) {
-                result = await BookingRepository.findByStatus(status as string);
+                result = await BookingRepository.findByStatus(status as string, req.lang);
             } else {
-                result = await BookingRepository.findAll(include_deleted === 'true');
+                result = await BookingRepository.findAll(include_deleted === 'true', req.lang);
             }
 
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -571,7 +644,7 @@ export class BookingController {
             if (isNaN(id)) {
                 res.status(400).json({
                     status: false,
-                    message: "ID invalide",
+                    message: I18n.t('invalid_id', req.lang),
                     code: 400
                 });
                 return;
@@ -583,12 +656,12 @@ export class BookingController {
                     booking.generated_trip_id,
                     booking.generated_trip_seat_id,
                     id
-                );
+                , req.lang);
 
                 if (availabilityCheck.body && !(availabilityCheck.body as any).available) {
                     res.status(409).json({
                         status: false,
-                        message: "Ce siège est déjà réservé pour ce voyage",
+                        message: I18n.t('this_seat_already_booked', req.lang),
                         code: 409
                     });
                     return;
@@ -601,7 +674,7 @@ export class BookingController {
             // edit that leaves both alone.
             let existingBooking: Booking | null = null;
             if (booking.payment_method === 'wallet' || booking.status === 'cancelled') {
-                const existing = await BookingRepository.findById(id);
+                const existing = await BookingRepository.findById(id, req.lang);
                 if (!existing.status) {
                     res.status(existing.code).json(existing);
                     return;
@@ -625,9 +698,16 @@ export class BookingController {
                     );
 
                     if (!paymentResult.status) {
+                        // paymentResult.message comes from WalletRepository,
+                        // which isn't language-aware — always use the
+                        // localized message here, never the raw English/
+                        // hardcoded fallback that used to win via `||`.
                         res.status(400).json({
                             status: false,
-                            message: paymentResult.message || "Solde du portefeuille insuffisant",
+                            message: I18n.t('insufficient_wallet_balance', req.lang, {
+                                current: '?',
+                                required: existingBooking.total_price.toString()
+                            }),
                             code: 400
                         });
                         return;
@@ -660,12 +740,12 @@ export class BookingController {
                 }
             }
 
-            const result = await BookingRepository.update(id, booking);
+            const result = await BookingRepository.update(id, booking, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -680,18 +760,18 @@ export class BookingController {
             if (isNaN(id)) {
                 res.status(400).json({
                     status: false,
-                    message: "ID invalide",
+                    message: I18n.t('invalid_id', req.lang),
                     code: 400
                 });
                 return;
             }
 
-            const result = await BookingRepository.softDelete(id, deleted_by);
+            const result = await BookingRepository.softDelete(id, deleted_by, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -705,18 +785,18 @@ export class BookingController {
             if (isNaN(id)) {
                 res.status(400).json({
                     status: false,
-                    message: "ID invalide",
+                    message: I18n.t('invalid_id', req.lang),
                     code: 400
                 });
                 return;
             }
 
-            const result = await BookingRepository.restore(id);
+            const result = await BookingRepository.restore(id, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -730,18 +810,18 @@ export class BookingController {
             if (isNaN(id)) {
                 res.status(400).json({
                     status: false,
-                    message: "ID invalide",
+                    message: I18n.t('invalid_id', req.lang),
                     code: 400
                 });
                 return;
             }
 
-            const result = await BookingRepository.delete(id);
+            const result = await BookingRepository.delete(id, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -755,18 +835,18 @@ export class BookingController {
             if (!trip_id) {
                 res.status(400).json({
                     status: false,
-                    message: "trip_id est requis",
+                    message: I18n.t('trip_id_required', req.lang),
                     code: 400
                 });
                 return;
             }
 
-            const result = await BookingRepository.getBookedSeatIds(parseInt(trip_id as string));
+            const result = await BookingRepository.getBookedSeatIds(parseInt(trip_id as string), req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -780,7 +860,7 @@ export class BookingController {
             if (!trip_id || !seat_id) {
                 res.status(400).json({
                     status: false,
-                    message: "trip_id et seat_id sont requis",
+                    message: I18n.t('trip_seat_id_required', req.lang),
                     code: 400
                 });
                 return;
@@ -790,12 +870,12 @@ export class BookingController {
                 parseInt(trip_id as string),
                 parseInt(seat_id as string),
                 exclude_booking_id ? parseInt(exclude_booking_id as string) : undefined
-            );
+            , req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -808,12 +888,12 @@ export class BookingController {
 
             const result = await BookingRepository.getStatistics(
                 agency_id ? parseInt(agency_id as string) : undefined
-            );
+            , req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -828,12 +908,12 @@ export class BookingController {
                 agency_id ? parseInt(agency_id as string) : undefined,
                 start_date ? new Date(start_date as string) : undefined,
                 end_date ? new Date(end_date as string) : undefined
-            );
+            , req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -866,12 +946,12 @@ export class BookingController {
             if (end_date) filters.endDate = new Date(end_date as string);
             if (agency_id) filters.agencyId = parseInt(agency_id as string);
 
-            const result = await BookingRepository.search(filters);
+            const result = await BookingRepository.search(filters, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -885,7 +965,7 @@ export class BookingController {
             if (!start_date && !end_date && !date) {
                 res.status(400).json({
                     status: false,
-                    message: "start_date et end_date ou date sont requis",
+                    message: I18n.t('date_range_required', req.lang),
                     code: 400
                 });
                 return;
@@ -897,7 +977,7 @@ export class BookingController {
                 const startOfDay = new Date(selectedDate.setHours(0, 0, 0, 0));
                 const endOfDay = new Date(selectedDate.setHours(23, 59, 59, 999));
                 
-                const result = await BookingRepository.findByDateRange(startOfDay, endOfDay);
+                const result = await BookingRepository.findByDateRange(startOfDay, endOfDay, req.lang);
                 res.status(result.code).json(result);
                 return;
             }
@@ -905,12 +985,12 @@ export class BookingController {
             const result = await BookingRepository.findByDateRange(
                 new Date(start_date as string),
                 new Date(end_date as string)
-            );
+            , req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -924,12 +1004,12 @@ export class BookingController {
             const result = await BookingRepository.findRecent(
                 limit ? parseInt(limit as string) : 10,
                 agency_id ? parseInt(agency_id as string) : undefined
-            );
+            , req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -943,7 +1023,7 @@ export class BookingController {
             if (!booking_ids || !Array.isArray(booking_ids) || booking_ids.length === 0) {
                 res.status(400).json({
                     status: false,
-                    message: "booking_ids (array) est requis",
+                    message: I18n.t('booking_ids_required', req.lang),
                     code: 400
                 });
                 return;
@@ -952,18 +1032,18 @@ export class BookingController {
             if (!cancellation_reason) {
                 res.status(400).json({
                     status: false,
-                    message: "cancellation_reason est requis",
+                    message: I18n.t('cancellation_reason_required', req.lang),
                     code: 400
                 });
                 return;
             }
 
-            const result = await BookingRepository.cancelBatch(booking_ids, cancellation_reason);
+            const result = await BookingRepository.cancelBatch(booking_ids, cancellation_reason, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -977,7 +1057,7 @@ export class BookingController {
             if (!bookings || !Array.isArray(bookings) || bookings.length === 0) {
                 res.status(400).json({
                     status: false,
-                    message: "bookings (array) est requis",
+                    message: I18n.t('bookings_array_required', req.lang),
                     code: 400
                 });
                 return;
@@ -986,7 +1066,7 @@ export class BookingController {
             // Create each booking
             const results = [];
             for (const booking of bookings) {
-                const result = await BookingRepository.create(booking);
+                const result = await BookingRepository.create(booking, req.lang);
                 if (result.status) {
                     results.push(result.body);
                 }
@@ -994,14 +1074,14 @@ export class BookingController {
 
             res.status(201).json({
                 status: true,
-                message: "Réservations créées",
+                message: I18n.t('bookings_created', req.lang),
                 body: results,
                 code: 201
             });
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -1014,12 +1094,12 @@ export class BookingController {
 
             const result = await BookingRepository.cleanupSoftDeleted(
                 older_than_days ? parseInt(older_than_days as string) : 30
-            );
+            , req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -1030,7 +1110,7 @@ export class BookingController {
         try {
             const { agency_id } = req.query;
 
-            const result = await BookingRepository.findAll(true);
+            const result = await BookingRepository.findAll(true, req.lang);
             
             // Filter only soft deleted
             if (result.status && result.body && Array.isArray(result.body)) {
@@ -1041,7 +1121,7 @@ export class BookingController {
         } catch (error) {
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -1076,7 +1156,7 @@ export class BookingController {
             }
 
             // Get booking details
-            const bookingResult = await BookingRepository.findById(parseInt(booking_id));
+            const bookingResult = await BookingRepository.findById(parseInt(booking_id), req.lang);
             if (!bookingResult.status || !bookingResult.body) {
                 res.status(404).json({
                     status: false,
@@ -1103,7 +1183,7 @@ export class BookingController {
             if (status !== 'confirmed' && status !== 'pending') {
                 res.status(400).json({
                     status: false,
-                    message: I18n.t('cannot_cancel_booking', req.lang) || 'Cette réservation ne peut pas être annulée',
+                    message: I18n.t('cannot_cancel_booking', req.lang),
                     code: 400
                 });
                 return;
@@ -1113,7 +1193,7 @@ export class BookingController {
             let bookingIds = [parseInt(booking_id)];
             if (booking.group_id) {
                 console.log(`📦 [BookingController] Cancelling group: ${booking.group_id}`);
-                const groupBookingsResult = await BookingRepository.findByGroupId(booking.group_id);
+                const groupBookingsResult = await BookingRepository.findByGroupId(booking.group_id, req.lang);
 
                 if (groupBookingsResult.status && groupBookingsResult.body) {
                     // Only include bookings that can be cancelled
@@ -1126,13 +1206,13 @@ export class BookingController {
                     console.log(`   Found ${bookingIds.length} bookings to cancel in group`);
                 }
             }
-            const result = await BookingRepository.cancelBatch(bookingIds, cancellation_reason);
+            const result = await BookingRepository.cancelBatch(bookingIds, cancellation_reason, req.lang);
             res.status(result.code).json(result);
         } catch (error) {
             console.error('❌ Error cancelling booking:', error);
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }
@@ -1168,7 +1248,7 @@ export class BookingController {
             }
 
             // Get booking details
-            const bookingResult = await BookingRepository.findById(parseInt(booking_id));
+            const bookingResult = await BookingRepository.findById(parseInt(booking_id), req.lang);
             if (!bookingResult.status || !bookingResult.body) {
                 res.status(404).json({
                     status: false,
@@ -1194,7 +1274,7 @@ export class BookingController {
             if (booking.status.toLowerCase() !== 'confirmed') {
                 res.status(400).json({
                     status: false,
-                    message: I18n.t('cannot_modify_booking', req.lang) || 'Cette réservation ne peut pas être modifiée',
+                    message: I18n.t('cannot_modify_booking', req.lang),
                     code: 400
                 });
                 return;
@@ -1211,7 +1291,7 @@ export class BookingController {
                 if (hoursUntilDeparture < 2) {
                     res.status(400).json({
                         status: false,
-                        message: I18n.t('too_close_to_departure', req.lang) || 'Modification impossible: le départ est dans moins de 2 heures',
+                        message: I18n.t('too_close_to_departure', req.lang),
                         code: 400
                     });
                     return;
@@ -1224,7 +1304,7 @@ export class BookingController {
             if (!seatCheck) {
                 res.status(404).json({
                     status: false,
-                    message: I18n.t('seat_not_found', req.lang) || 'Siège non trouvé',
+                    message: I18n.t('seat_not_found', req.lang),
                     code: 404
                 });
                 return;
@@ -1233,7 +1313,7 @@ export class BookingController {
             if (seatCheck.status !== 'available') {
                 res.status(400).json({
                     status: false,
-                    message: I18n.t('seat_not_available', req.lang) || 'Ce siège n\'est pas disponible',
+                    message: I18n.t('seat_not_available', req.lang),
                     code: 400
                 });
                 return;
@@ -1242,7 +1322,7 @@ export class BookingController {
             // Update booking with new seat
             await BookingRepository.update(parseInt(booking_id), {
                 generated_trip_seat_id: new_seat_id,
-            } as Partial<Booking>);
+            } as Partial<Booking>, req.lang);
 
             // Mark old seat as available
             await GeneratedTripSeatRepository.setStatus(booking.generated_trip_seat_id, 'available');
@@ -1251,11 +1331,11 @@ export class BookingController {
             await GeneratedTripSeatRepository.setStatus(new_seat_id, 'reserved');
 
             // Get updated booking
-            const updatedBooking = await BookingRepository.findById(parseInt(booking_id));
+            const updatedBooking = await BookingRepository.findById(parseInt(booking_id), req.lang);
 
             res.status(200).json({
                 status: true,
-                message: I18n.t('booking_modified', req.lang) || 'Réservation modifiée avec succès',
+                message: I18n.t('booking_modified', req.lang),
                 body: updatedBooking.body,
                 code: 200
             });
@@ -1263,7 +1343,7 @@ export class BookingController {
             console.error('❌ Error modifying booking:', error);
             res.status(500).json({
                 status: false,
-                message: "Erreur serveur",
+                message: I18n.t('server_error', req.lang),
                 code: 500
             });
         }

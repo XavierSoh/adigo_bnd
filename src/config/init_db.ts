@@ -9,6 +9,7 @@ import { migrateVtcDriverDocuments } from "./migrate_vtc_driver_documents";
 import { migrateCustomerAuthTokens } from "./migrate_customer_auth_tokens";
 import { migrateEventCodeColumn } from "./migrate_event_code_column";
 import { migrateCustomerGoogleId } from "./migrate_customer_google_id";
+import { migrateBookingPushNotifications } from "./migrate_booking_push_notifications";
 
 export const initDb = async () =>  {
     // Créer la base de données si elle n'existe pas
@@ -28,6 +29,7 @@ export const initDb = async () =>  {
     await migrateCustomerAuthTokens();
     await migrateEventCodeColumn();
     await migrateCustomerGoogleId();
+    await migrateBookingPushNotifications();
 
     // Initialiser les données par défaut
     await initFirtsItems();

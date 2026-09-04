@@ -22,6 +22,10 @@ import prismaDb from "../config/prismaClient";
 import { Booking } from "../models/booking.model";
 import ResponseModel from "../models/response.model";
 import { TierService } from "../services/tier.service";
+import { WalletRepository } from "./wallet.repository";
+import { I18n, Language } from "../utils/i18n";
+import { BookingNotificationService } from "../services/bookingNotification.service";
+import { AdminNotificationService, AdminLabel } from "../services/adminNotification.service";
 
 // --- Reusable nested-select fragments, matching the original's json_build_object field lists exactly ---
 
@@ -143,7 +147,7 @@ export class BookingRepository {
         });
     }
 
-    static async create(booking: Booking): Promise<ResponseModel> {
+    static async create(booking: Booking, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const generateBookingReference = (): string => {
                 const random = Math.floor(Math.random() * 999999).toString().padStart(6, '0');
@@ -184,15 +188,15 @@ export class BookingRepository {
                 );
             }
 
-            return { status: true, message: "Réservation créée", body: result, code: 201 };
+            return { status: true, message: I18n.t('booking_created', lang), body: result, code: 201 };
         } catch (error) {
             console.log(`Erreur de réservation ... ${JSON.stringify(error)}`)
-            return { status: false, message: "Erreur lors de la création de la réservation", code: 500, body: error };
+            return { status: false, message: I18n.t('booking_error', lang), code: 500, body: error };
         }
     }
 
     // Update booking
-    static async update(id: number, booking: Partial<Booking>): Promise<ResponseModel> {
+    static async update(id: number, booking: Partial<Booking>, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const data: Prisma.bookingUncheckedUpdateInput = { updated_at: new Date() };
             if (booking.generated_trip_id != null) data.generated_trip_id = booking.generated_trip_id;
@@ -209,19 +213,19 @@ export class BookingRepository {
             const updateResult = await prismaDb.booking.updateMany({ where: { id, is_deleted: false }, data });
 
             if (updateResult.count === 0) {
-                return { status: false, message: "Réservation non trouvée", code: 404 };
+                return { status: false, message: I18n.t('booking_not_found', lang), code: 404 };
             }
 
             const result = await prismaDb.booking.findUnique({ where: { id } });
 
-            return { status: true, message: "Réservation mise à jour", body: result, code: 200 };
+            return { status: true, message: I18n.t('booking_updated', lang), body: result, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la mise à jour de la réservation", code: 500 };
+            return { status: false, message: I18n.t('booking_update_error', lang), code: 500 };
         }
     }
 
     // Get statistics by payment method
-    static async getStatisticsByPaymentMethod(agencyId?: number): Promise<ResponseModel> {
+    static async getStatisticsByPaymentMethod(agencyId?: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const where: Prisma.bookingWhereInput = agencyId
                 ? { is_deleted: false, generated_trip: { trip: { agency_id: agencyId } } }
@@ -245,14 +249,14 @@ export class BookingRepository {
                 return { payment_method: g.payment_method, total: g._count._all, confirmed, cancelled, completed };
             }));
 
-            return { status: true, message: "Statistiques par méthode de paiement récupérées", body: result, code: 200 };
+            return { status: true, message: I18n.t('statistics_retrieved', lang), body: result, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des statistiques", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
     // Soft delete booking
-    static async softDelete(id: number, deletedBy?: number): Promise<ResponseModel> {
+    static async softDelete(id: number, deletedBy?: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const result = await prismaDb.booking.updateMany({
                 where: { id, is_deleted: false },
@@ -260,17 +264,17 @@ export class BookingRepository {
             });
 
             if (result.count === 0) {
-                return { status: false, message: "Réservation non trouvée ou déjà supprimée", code: 404 };
+                return { status: false, message: I18n.t('booking_or_already_deleted', lang), code: 404 };
             }
 
-            return { status: true, message: "Réservation supprimée", code: 200 };
+            return { status: true, message: I18n.t('booking_deleted', lang), code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la suppression de la réservation", code: 500 };
+            return { status: false, message: I18n.t('booking_delete_error', lang), code: 500 };
         }
     }
 
     // Restore soft deleted booking
-    static async restore(id: number): Promise<ResponseModel> {
+    static async restore(id: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const result = await prismaDb.booking.updateMany({
                 where: { id, is_deleted: true },
@@ -278,34 +282,34 @@ export class BookingRepository {
             });
 
             if (result.count === 0) {
-                return { status: false, message: "Réservation non trouvée ou déjà active", code: 404 };
+                return { status: false, message: I18n.t('booking_or_already_active', lang), code: 404 };
             }
 
             const restored = await prismaDb.booking.findUnique({ where: { id } });
 
-            return { status: true, message: "Réservation restaurée", body: restored, code: 200 };
+            return { status: true, message: I18n.t('booking_restored', lang), body: restored, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la restauration de la réservation", code: 500 };
+            return { status: false, message: I18n.t('booking_restore_error', lang), code: 500 };
         }
     }
 
     // Hard delete booking
-    static async delete(id: number): Promise<ResponseModel> {
+    static async delete(id: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const result = await prismaDb.booking.deleteMany({ where: { id } });
 
             if (result.count === 0) {
-                return { status: false, message: "Réservation non trouvée", code: 404 };
+                return { status: false, message: I18n.t('booking_not_found', lang), code: 404 };
             }
 
-            return { status: true, message: "Réservation supprimée définitivement", code: 200 };
+            return { status: true, message: I18n.t('booking_permanently_deleted', lang), code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la suppression de la réservation", code: 500 };
+            return { status: false, message: I18n.t('booking_delete_error', lang), code: 500 };
         }
     }
 
     // Get bookings by trip and status
-    static async findByTripAndStatus(tripId: number, status: string): Promise<ResponseModel> {
+    static async findByTripAndStatus(tripId: number, status: string, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             // `gt.trip_id = $1` in the original — a REAL column on
             // generated_trip, unrelated to the b.trip_id bug fixed
@@ -316,15 +320,15 @@ export class BookingRepository {
                 orderBy: { booking_date: 'desc' },
             });
 
-            return { status: true, message: "Liste des réservations récupérée", body: rows.map(mapBooking), code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: rows.map(mapBooking), code: 200 };
         } catch (error) {
             console.log(`Error in findByTripAndStatus: ${JSON.stringify(error)}`);
-            return { status: false, message: "Erreur lors de la récupération des réservations par voyages et status ", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
     // Check seat availability for trip
-    static async checkSeatAvailability(tripId: number, seatId: number, excludeBookingId?: number): Promise<ResponseModel> {
+    static async checkSeatAvailability(tripId: number, seatId: number, excludeBookingId?: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             // 'pending' counts as taken too — a seat with an Orange Money
             // charge in flight must not be handed out to a second customer
@@ -339,14 +343,14 @@ export class BookingRepository {
                 },
             });
 
-            return { status: true, message: "Disponibilité vérifiée", body: { available: count === 0 }, code: 200 };
+            return { status: true, message: I18n.t('seat_availability_checked', lang), body: { available: count === 0 }, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la vérification de disponibilité", code: 500 };
+            return { status: false, message: I18n.t('seat_availability_check_error', lang), code: 500 };
         }
     }
 
     // Get booked seat IDs for a trip
-    static async getBookedSeatIds(tripId: number): Promise<ResponseModel> {
+    static async getBookedSeatIds(tripId: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const result = await prismaDb.booking.findMany({
                 where: { generated_trip_id: tripId, status: { in: ['confirmed', 'pending'] }, is_deleted: false },
@@ -355,14 +359,14 @@ export class BookingRepository {
 
             const seatIds = result.map((row) => row.generated_trip_seat_id);
 
-            return { status: true, message: "Sièges réservés récupérés", body: seatIds, code: 200 };
+            return { status: true, message: I18n.t('booked_seats_retrieved', lang), body: seatIds, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des sièges réservés", code: 500 };
+            return { status: false, message: I18n.t('seat_availability_check_error', lang), code: 500 };
         }
     }
 
     // Get booking statistics
-    static async getStatistics(agencyId?: number): Promise<ResponseModel> {
+    static async getStatistics(agencyId?: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const where: Prisma.bookingWhereInput = agencyId
                 ? { is_deleted: false, generated_trip: { trip: { agency_id: agencyId } } }
@@ -375,14 +379,14 @@ export class BookingRepository {
                 prismaDb.booking.count({ where: { ...where, status: 'completed' } }),
             ]);
 
-            return { status: true, message: "Statistiques récupérées", body: { total, confirmed, cancelled, completed }, code: 200 };
+            return { status: true, message: I18n.t('statistics_retrieved', lang), body: { total, confirmed, cancelled, completed }, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des statistiques", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
     // Get revenue statistics
-    static async getRevenueStatistics(agencyId?: number, startDate?: Date, endDate?: Date): Promise<ResponseModel> {
+    static async getRevenueStatistics(agencyId?: number, startDate?: Date, endDate?: Date, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const where: Prisma.bookingWhereInput = { is_deleted: false };
             if (agencyId) where.generated_trip = { trip: { agency_id: agencyId } };
@@ -418,7 +422,7 @@ export class BookingRepository {
 
             return {
                 status: true,
-                message: "Statistiques de revenus récupérées",
+                message: I18n.t('statistics_retrieved', lang),
                 body: {
                     confirmed_revenue: confirmedRevenue,
                     completed_revenue: completedRevenue,
@@ -427,7 +431,7 @@ export class BookingRepository {
                 code: 200,
             };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des statistiques de revenus", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
@@ -440,7 +444,7 @@ export class BookingRepository {
         startDate?: Date;
         endDate?: Date;
         agencyId?: number;
-    }): Promise<ResponseModel> {
+    }, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const where: Prisma.bookingWhereInput = { is_deleted: false };
 
@@ -476,19 +480,97 @@ export class BookingRepository {
 
             const bookings = await prismaDb.booking.findMany({ where, orderBy: { booking_date: 'desc' } });
 
-            return { status: true, message: "Recherche effectuée", body: bookings, code: 200 };
+            return { status: true, message: I18n.t('search_completed', lang), body: bookings, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la recherche", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
     // Cancel batch bookings
-    static async cancelBatch(bookingIds: number[], cancellationReason: string): Promise<ResponseModel> {
+    //
+    // BUG FIX APPLIED (flagged to and confirmed by the user, not silently
+    // patched): this is what the mobile customer-facing cancel endpoint
+    // (`PUT /booking/:booking_id/cancel` -> BookingController.cancelSingle)
+    // actually calls, and it never refunded the wallet — only the separate,
+    // desktop-facing `update()` controller method had the
+    // WalletRepository.recordRefund call. Reproduced here with the exact
+    // same rule ("cancellation always refunds to the wallet regardless of
+    // original payment method", only on an actual not-already-cancelled ->
+    // cancelled transition, only when total_price > 0) so both cancellation
+    // paths behave identically. Pre-cancellation state is fetched first
+    // (mirrors update()'s existingBooking fetch-before-mutate) so a caller
+    // passing already-cancelled ids (the PATCH /cancel-batch route accepts
+    // raw ids with no pre-filtering) can't trigger a double refund.
+    static async cancelBatch(bookingIds: number[], cancellationReason: string, lang: Language = 'en'): Promise<ResponseModel> {
         try {
+            const preCancelBookings = await prismaDb.booking.findMany({
+                where: { id: { in: bookingIds }, is_deleted: false },
+                select: {
+                    id: true, customer_id: true, total_price: true, payment_method: true, status: true, booking_reference: true,
+                    customer_booking_customer_idTocustomer: {
+                        select: {
+                            fcm_token: true, notification_enabled: true, preferred_language: true,
+                            first_name: true, last_name: true, phone: true, email: true,
+                        },
+                    },
+                    generated_trip: { select: { actual_departure_time: true, trip: { select: { departure_city: true, arrival_city: true } } } },
+                },
+            });
+
             await prismaDb.booking.updateMany({
                 where: { id: { in: bookingIds }, is_deleted: false },
                 data: { status: 'cancelled', cancellation_reason: cancellationReason, cancellation_date: new Date(), updated_at: new Date() },
             });
+
+            for (const booking of preCancelBookings) {
+                if (booking.status.toLowerCase() === 'cancelled') continue;
+
+                // Push notifications are best-effort — never let a failure
+                // here block the cancellation itself (already committed
+                // above), same spirit as the refund-failure console.error.
+                BookingNotificationService.sendBookingCancelled(
+                    booking.id,
+                    booking.customer_booking_customer_idTocustomer,
+                    booking.booking_reference,
+                    booking.generated_trip.trip.departure_city,
+                    booking.generated_trip.trip.arrival_city
+                ).catch((err) => console.error(`⚠️ Warning: booking_cancelled push failed for booking ${booking.id}:`, err));
+
+                {
+                    const c = booking.customer_booking_customer_idTocustomer;
+                    AdminNotificationService.notify({
+                        lang: c.preferred_language === 'en' ? 'en' : 'fr',
+                        icon: '❌',
+                        heading: { fr: "Réservation annulée", en: "Booking cancelled" },
+                        lines: [
+                            [AdminLabel.customerName, `${c.first_name} ${c.last_name}`],
+                            [AdminLabel.customerPhone, c.phone || '-'],
+                            [AdminLabel.customerEmail, c.email || '-'],
+                            [AdminLabel.booking, booking.booking_reference || `#${booking.id}`],
+                            [AdminLabel.trip, `${booking.generated_trip.trip.departure_city} → ${booking.generated_trip.trip.arrival_city}`],
+                            [AdminLabel.tripDate, booking.generated_trip.actual_departure_time ? new Date(booking.generated_trip.actual_departure_time).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : '-'],
+                            [AdminLabel.amount, `${booking.total_price} XAF`],
+                            [AdminLabel.reason, cancellationReason],
+                        ],
+                    });
+                }
+
+                if (booking.total_price <= 0) continue;
+                const refundResult = await WalletRepository.recordRefund(
+                    booking.customer_id,
+                    booking.total_price,
+                    `Booking cancellation refund (paid via ${booking.payment_method}) - ${booking.booking_reference || 'Ref: ' + booking.id}`
+                );
+                if (!refundResult.status) {
+                    console.error(`⚠️ Warning: Booking ${booking.id} cancelled but wallet refund failed:`, refundResult.message);
+                    continue;
+                }
+                BookingNotificationService.sendRefundCredited(
+                    booking.customer_booking_customer_idTocustomer,
+                    booking.total_price,
+                    refundResult.body.new_balance
+                ).catch((err) => console.error(`⚠️ Warning: refund_credited push failed for booking ${booking.id}:`, err));
+            }
 
             // `RETURNING *` only returns the rows the UPDATE actually
             // matched — refetching with the SAME predicate (status isn't
@@ -496,14 +578,14 @@ export class BookingRepository {
             // that exactly, not "all requested ids regardless of match."
             const result = await prismaDb.booking.findMany({ where: { id: { in: bookingIds }, is_deleted: false } });
 
-            return { status: true, message: "Réservations annulées", body: result, code: 200 };
+            return { status: true, message: I18n.t('bookings_cancelled', lang), body: result, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de l'annulation des réservations", code: 500 };
+            return { status: false, message: I18n.t('booking_cancel_error', lang), code: 500 };
         }
     }
 
     // Get recent bookings
-    static async findRecent(limit: number = 10, agencyId?: number): Promise<ResponseModel> {
+    static async findRecent(limit: number = 10, agencyId?: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const where: Prisma.bookingWhereInput = agencyId
                 ? { is_deleted: false, generated_trip: { trip: { agency_id: agencyId } } }
@@ -511,14 +593,14 @@ export class BookingRepository {
 
             const bookings = await prismaDb.booking.findMany({ where, orderBy: { booking_date: 'desc' }, take: limit });
 
-            return { status: true, message: "Réservations récentes récupérées", body: bookings, code: 200 };
+            return { status: true, message: I18n.t('recent_bookings_retrieved', lang), body: bookings, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des réservations récentes", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
     // Cleanup soft deleted bookings older than specified days
-    static async cleanupSoftDeleted(olderThanDays: number = 30): Promise<ResponseModel> {
+    static async cleanupSoftDeleted(olderThanDays: number = 30, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
             const result = await prismaDb.booking.deleteMany({
@@ -527,12 +609,12 @@ export class BookingRepository {
 
             return {
                 status: true,
-                message: "Nettoyage effectué",
+                message: I18n.t('cleanup_done', lang),
                 body: { deleted_count: result.count },
                 code: 200
             };
         } catch (error) {
-            return { status: false, message: "Erreur lors du nettoyage", code: 500 };
+            return { status: false, message: I18n.t('cleanup_error', lang), code: 500 };
         }
     }
 
@@ -556,7 +638,7 @@ export class BookingRepository {
         return new Map(users.map((u) => [u.id, u.login]));
     }
 
-    static async findByAgency(agencyId: number): Promise<ResponseModel> {
+    static async findByAgency(agencyId: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: { generated_trip: { trip: { agency_id: agencyId } }, is_deleted: false },
@@ -570,19 +652,19 @@ export class BookingRepository {
                 created_by_name: createdByNames.get(row.created_by) ?? null,
             }));
 
-            return { status: true, message: "Liste des réservations récupérée", body: bookings, code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: bookings, code: 200 };
         } catch (error: any) {
             console.log(`Agency error: ${JSON.stringify(error)}`);
             return {
                 status: false,
-                message: `Erreur lors de la récupération des réservations par agence: ${error.message || error.toString()}`,
+                message: I18n.t('bookings_fetch_error', lang),
                 code: 500,
                 exception: error.stack || error
             };
         }
     }
 
-    static async findAll(includeDeleted: boolean = false): Promise<ResponseModel> {
+    static async findAll(includeDeleted: boolean = false, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: includeDeleted ? {} : { is_deleted: false },
@@ -596,18 +678,18 @@ export class BookingRepository {
                 created_by_name: createdByNames.get(row.created_by) ?? null,
             }));
 
-            return { status: true, message: "Liste des réservations récupérée", body: bookings, code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: bookings, code: 200 };
         } catch (error: any) {
             return {
                 status: false,
-                message: `Erreur lors de la récupération de toutes les  réservations: ${error.message || error.toString()}`,
+                message: I18n.t('bookings_fetch_error', lang),
                 code: 500,
                 exception: error.stack || error
             };
         }
     }
 
-    static async findById(id: number): Promise<ResponseModel> {
+    static async findById(id: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const booking = await prismaDb.booking.findFirst({
                 where: { id, is_deleted: false },
@@ -615,16 +697,16 @@ export class BookingRepository {
             });
 
             if (!booking) {
-                return { status: false, message: "Réservation non trouvée", code: 404 };
+                return { status: false, message: I18n.t('booking_not_found', lang), code: 404 };
             }
 
-            return { status: true, message: "Réservation trouvée", body: mapBooking(booking), code: 200 };
+            return { status: true, message: I18n.t('booking_found', lang), body: mapBooking(booking), code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la recherche de la réservation", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
-    static async findByTrip(tripId: number): Promise<ResponseModel> {
+    static async findByTrip(tripId: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: { generated_trip_id: tripId, is_deleted: false },
@@ -632,18 +714,18 @@ export class BookingRepository {
                 orderBy: { booking_date: 'desc' },
             });
 
-            return { status: true, message: "Liste des réservations récupérée", body: rows.map(mapBooking), code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: rows.map(mapBooking), code: 200 };
         } catch (error: any) {
             return {
                 status: false,
-                message: `Erreur lors de la récupération des réservations: ${error.message || error.toString()}`,
+                message: I18n.t('bookings_fetch_error', lang),
                 code: 500,
                 exception: error.stack || error
             };
         }
     }
 
-    static async findByUser(customerId: number): Promise<ResponseModel> {
+    static async findByUser(customerId: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: { customer_id: customerId, is_deleted: false },
@@ -662,13 +744,13 @@ export class BookingRepository {
             // and deliberately dropped, not an oversight.
             const bookings = rows.map((row) => mapBookingExtended(row, { busRegistrationKey: 'registration_number', busType: true, tripPrice: true }));
 
-            return { status: true, message: "Liste des réservations récupérée", body: bookings, code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: bookings, code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des réservations par utilisateur", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
-    static async findByGroupId(groupId: string): Promise<ResponseModel> {
+    static async findByGroupId(groupId: string, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: { group_id: groupId, is_deleted: false },
@@ -676,13 +758,13 @@ export class BookingRepository {
                 orderBy: { booking_date: 'desc' },
             });
 
-            return { status: true, message: "Liste des réservations du groupe récupérée", body: rows.map(mapBooking), code: 200 };
+            return { status: true, message: I18n.t('bookings_group_retrieved', lang), body: rows.map(mapBooking), code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des réservations par groupe ", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
-    static async findByStatus(status: string): Promise<ResponseModel> {
+    static async findByStatus(status: string, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: { status, is_deleted: false },
@@ -690,13 +772,13 @@ export class BookingRepository {
                 orderBy: { booking_date: 'desc' },
             });
 
-            return { status: true, message: "Liste des réservations récupérée", body: rows.map(mapBooking), code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: rows.map(mapBooking), code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des réservations par status ", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
-    static async findByDateRange(startDate: Date, endDate: Date): Promise<ResponseModel> {
+    static async findByDateRange(startDate: Date, endDate: Date, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const rows = await prismaDb.booking.findMany({
                 where: { booking_date: { gte: startDate, lte: endDate }, is_deleted: false },
@@ -704,13 +786,13 @@ export class BookingRepository {
                 orderBy: { booking_date: 'desc' },
             });
 
-            return { status: true, message: "Liste des réservations récupérée", body: rows.map(mapBooking), code: 200 };
+            return { status: true, message: I18n.t('bookings_list_retrieved', lang), body: rows.map(mapBooking), code: 200 };
         } catch (error) {
-            return { status: false, message: "Erreur lors de la récupération des réservations par plage de date...", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
-    static async findAllWithDetails(agencyId?: number): Promise<ResponseModel> {
+    static async findAllWithDetails(agencyId?: number, lang: Language = 'en'): Promise<ResponseModel> {
         try {
             const where: Prisma.bookingWhereInput = { is_deleted: false };
             if (agencyId) where.generated_trip = { trip: { agency_id: agencyId } };
@@ -723,10 +805,10 @@ export class BookingRepository {
 
             const bookings = rows.map((row) => mapBookingExtended(row, { busRegistrationKey: 'registration_number', busType: true, tripPrice: true }));
 
-            return { status: true, message: "Liste des réservations avec détails récupérée", body: bookings, code: 200 };
+            return { status: true, message: I18n.t('bookings_with_details_retrieved', lang), body: bookings, code: 200 };
         } catch (error) {
             console.log(`Error in findAllWithDetails: ${JSON.stringify(error)}`);
-            return { status: false, message: "Erreur lors de la récupération des réservations avec details ...", code: 500 };
+            return { status: false, message: I18n.t('bookings_fetch_error', lang), code: 500 };
         }
     }
 
