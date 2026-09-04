@@ -5,6 +5,19 @@ import { Prisma } from "@prisma/client";
 import { PaymentTransactionCreateDto } from "../models/payment-transaction.model";
 import ResponseModel from "../models/response.model";
 
+/**
+ * Maps a raw mobile-money provider status to the lowercase vocabulary
+ * `payment_transaction_status_check` enforces
+ * (initiated/pending/successful/failed/expired). Handles Orange Money's
+ * own "SUCCESSFULL" (double L) spelling; falls back to a plain lowercase
+ * of anything else unrecognized rather than silently dropping it.
+ */
+function normalizeProviderStatus(status: string): string {
+    const lower = status.toLowerCase();
+    if (lower === 'successfull') return 'successful';
+    return lower;
+}
+
 export interface PaymentTransactionListFilters {
     status?: string;
     purpose?: string;
@@ -125,7 +138,24 @@ export class PaymentTransactionRepository {
         }
     }
 
-    /** Records the latest known status from Orange Money, without settling anything. */
+    /**
+     * Records the latest known status from Orange Money, without settling
+     * anything.
+     *
+     * `status` is normalized before writing - discovered via a live
+     * production payment test: the `payment_transaction_status_check` DB
+     * constraint only allows lowercase `initiated/pending/successful/
+     * failed/expired`, but callers always pass Orange Money's own raw
+     * value verbatim (`PENDING`, `FAILED`, `SUCCESSFULL` - note the
+     * double L, that's OM's own spelling), which violates the constraint.
+     * That failure was being silently swallowed by this method's own
+     * try/catch, and its caller (PaymentService.checkStatus) never checks
+     * this call's result - so every real transaction's `status` column
+     * has been stuck at its creation-time value forever, invisible to any
+     * ledger/admin view, even though settlement itself was unaffected
+     * (it never reads this column - only the in-memory provider status
+     * and the separate `settled` boolean).
+     */
     static async updateStatus(
         id: number,
         status: string,
@@ -133,7 +163,8 @@ export class PaymentTransactionRepository {
         errorMessage?: string
     ): Promise<ResponseModel> {
         try {
-            const data: Prisma.payment_transactionUncheckedUpdateInput = { status, updated_at: new Date() };
+            const normalizedStatus = normalizeProviderStatus(status);
+            const data: Prisma.payment_transactionUncheckedUpdateInput = { status: normalizedStatus, updated_at: new Date() };
             if (providerTxnId !== undefined) data.provider_txn_id = providerTxnId;
             if (errorMessage !== undefined) data.error_message = errorMessage;
 
