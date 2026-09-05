@@ -172,7 +172,14 @@ export class BookingRepository {
                     payment_method: booking.payment_method,
                     payment_reference: booking.payment_reference,
                     is_deleted: false,
-                    created_by: booking.created_by,
+                    // Required, no DB default (see createMultiple's same
+                    // fallback below) — the mobile Booking model has no
+                    // created_by field at all, so this was always
+                    // undefined for a real single-seat booking from the
+                    // app, failing Prisma's required-field validation on
+                    // every call. A self-service customer booking is its
+                    // own created_by.
+                    created_by: booking.created_by ?? booking.customer_id,
                     booking_reference: generateBookingReference(),
                     total_price: booking.total_price,
                     group_id: booking.group_id || null,
@@ -506,7 +513,7 @@ export class BookingRepository {
             const preCancelBookings = await prismaDb.booking.findMany({
                 where: { id: { in: bookingIds }, is_deleted: false },
                 select: {
-                    id: true, customer_id: true, total_price: true, payment_method: true, status: true, booking_reference: true,
+                    id: true, customer_id: true, total_price: true, payment_method: true, payment_status: true, status: true, booking_reference: true,
                     customer_booking_customer_idTocustomer: {
                         select: {
                             fcm_token: true, notification_enabled: true, preferred_language: true,
@@ -555,7 +562,23 @@ export class BookingRepository {
                     });
                 }
 
-                if (booking.total_price <= 0) continue;
+                // BUG FIX (found live, real money): refunded regardless of
+                // whether the booking was ever actually paid for. An Orange
+                // Money booking that never gets confirmed (payment failed,
+                // e.g. insufficient merchant balance) is created 'pending'/
+                // payment_status 'unpaid' and then auto-cancelled by the
+                // very code that initiated the failed charge (see
+                // BookingController.createMultiple's payment-failure
+                // branch) - this unconditional refund credited the
+                // customer's wallet with the full booking price for a
+                // booking they never paid a cent for. Cash bookings are
+                // 'unpaid' at booking time by design too (paid on
+                // boarding) and must not be refunded here either. Only an
+                // actually-paid booking (payment_status 'paid' - true for
+                // wallet debited at booking time, and for Orange Money
+                // once its settlement handler confirms the charge) has
+                // real money to give back.
+                if (booking.total_price <= 0 || booking.payment_status !== 'paid') continue;
                 const refundResult = await WalletRepository.recordRefund(
                     booking.customer_id,
                     booking.total_price,
