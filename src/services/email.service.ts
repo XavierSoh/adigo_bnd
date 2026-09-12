@@ -1,4 +1,5 @@
 import nodemailer, { Transporter } from "nodemailer";
+import path from "path";
 
 /**
  * Generic email sending via the self-hosted Postal mail server (see
@@ -52,6 +53,18 @@ export interface SendEmailParams {
     text: string;
 }
 
+// Logo shown in every email's header, referenced from templates.ts as
+// `cid:adigo-logo` (an attachment, not a hotlinked <img src="https://...">)
+// so it renders in every mail client without depending on the backend
+// being publicly reachable or on remote-image-loading being allowed - see
+// EMAIL_NOTIFICATIONS_PLAN.md. Copied (and resized down from the mobile
+// app's 3326x2075 source) from adigo_mobile/assets/images/adigo_white_logo.png
+// - white artwork, meant for the brand-red gradient header background.
+// tsc doesn't copy this .png into dist/ on its own — see copy-assets.js,
+// same class of gap as the migrations .sql files.
+const LOGO_PATH = path.join(__dirname, '../emails/assets/adigo-logo-white.png');
+const LOGO_CID = 'adigo-logo';
+
 /**
  * Sends an email. Returns true on success, false on any failure
  * (including "not configured") - never throws.
@@ -61,13 +74,21 @@ export async function sendEmail({ to, subject, html, text }: SendEmailParams): P
     if (!t) return false;
 
     try {
-        await t.sendMail({
+        const info = await t.sendMail({
             from: process.env.SMTP_FROM || 'ADIGO <noreply@adigobookings.com>',
             to,
             subject,
             html,
             text,
+            attachments: [
+                {
+                    filename: 'adigo-logo.png',
+                    path: LOGO_PATH,
+                    cid: LOGO_CID,
+                },
+            ],
         });
+        console.log(`✅ Email sent (to=${to}, subject="${subject}", messageId=${info.messageId})`);
         return true;
     } catch (error) {
         console.error(`❌ Email send failed (to=${to}, subject="${subject}"):`, error);

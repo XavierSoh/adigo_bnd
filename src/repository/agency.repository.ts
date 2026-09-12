@@ -17,6 +17,8 @@ export class AgencyRepository {
                     phone: agency.phone || null,
                     email: agency.email || null,
                     logo: agency.logo || null,
+                    latitude: agency.latitude ?? null,
+                    longitude: agency.longitude ?? null,
                     opening_hours: agency.opening_hours,
                     // `custom_hours` is a native Json column — pass the
                     // object directly (Prisma serializes it), not a

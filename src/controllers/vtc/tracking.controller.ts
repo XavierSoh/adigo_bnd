@@ -6,6 +6,7 @@
 import { Request, Response } from 'express';
 import trackingService from '../../services/vtc/tracking.service';
 import rideService from '../../services/vtc/ride.service';
+import driverService from '../../services/vtc/driver.service';
 import { CreateTrackingDto } from '../../models/vtc/tracking.model';
 import { SocketService } from '../../services/socket.service';
 
@@ -22,6 +23,23 @@ export class TrackingController {
 
       if (latitude == null || longitude == null) {
         return res.status(400).json({ success: false, message: 'latitude et longitude sont requis' });
+      }
+
+      // Ownership: this endpoint was wide open to any authenticated user
+      // (flagged since Phase 0, VTC_MODULE_PLAN.md §0.1 — deferred pending a
+      // driver role). Phase 2 gives drivers a resolvable identity, so a
+      // staff/admin token still passes unconditionally (desk-side testing,
+      // manual correction), but a customer token must resolve to this
+      // ride's own assigned driver.
+      if (!req.userRole) {
+        const ride: any = await rideService.getRideById(rideId);
+        if (!ride) {
+          return res.status(404).json({ success: false, message: 'Ride not found' });
+        }
+        const driver = req.userId ? await driverService.getDriverByUserId(req.userId) : null;
+        if (!driver || ride.driver_id !== driver.id) {
+          return res.status(403).json({ success: false, message: "Vous n'êtes pas le chauffeur de cette course" });
+        }
       }
 
       const data: CreateTrackingDto = { rideId: String(rideId), latitude, longitude, heading, speed };

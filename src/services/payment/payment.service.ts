@@ -19,6 +19,7 @@ import { getPaymentProvider, PaymentProviderName } from "./payment-provider.regi
 import { runSettlement } from "./payment-settlement.registry";
 import { AdminNotificationService, AdminLabel } from "../adminNotification.service";
 import ResponseModel from "../../models/response.model";
+import { Language } from "../../utils/i18n";
 
 export interface InitiatePaymentParams {
     customerId: number;
@@ -30,6 +31,33 @@ export interface InitiatePaymentParams {
     amount: number;
     description: string;
     metadata?: Record<string, any>;
+    /** Which language to translate a provider failure message into for the
+     * client-facing response (the raw provider message is still stored in
+     * the ledger's error_message column for admin/debugging). Defaults to
+     * French. */
+    lang?: Language;
+}
+
+// Orange Money's own error messages are raw, code-prefixed, and not meant
+// for a customer to read verbatim ("60019 ::  Le solde du compte du
+// payeur est insuffisant" - inconsistent spacing included) - found live
+// when a real booking's Orange Money charge failed and the mobile app had
+// nothing better to show than that exact string. Known codes get a clean,
+// actionable, bilingual message; anything unrecognized gets a generic one
+// - a customer should never see Orange Money's internal error format.
+const ORANGE_MONEY_ERROR_MESSAGES: Record<string, { fr: string; en: string }> = {
+    '60019': {
+        fr: "Solde Orange Money insuffisant. Rechargez votre compte ou choisissez un autre moyen de paiement.",
+        en: "Insufficient Orange Money balance. Top up your account or choose another payment method.",
+    },
+};
+
+function friendlyProviderError(rawMessage: string | undefined, lang: Language = 'fr'): string {
+    const fallback = lang === 'en'
+        ? "The Orange Money payment failed. Please try again or choose another payment method."
+        : "Le paiement Orange Money a échoué. Veuillez réessayer ou choisir un autre moyen de paiement.";
+    const code = rawMessage?.match(/^(\d+)\s*::/)?.[1];
+    return (code && ORANGE_MONEY_ERROR_MESSAGES[code]?.[lang]) || fallback;
 }
 
 // Orange Money's own API rejects OrderId over 20 characters (confirmed via

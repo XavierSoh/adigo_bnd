@@ -6,6 +6,8 @@ export interface AgencyModel {
     phone: string;
     email?: string;
     logo?: string; // Chemin ou URL du logo
+    latitude?: number;
+    longitude?: number;
     opening_hours: '24/7' | 'custom';
     custom_hours?: Record<string, { open: string; close: string }>;
     is_deleted?: boolean;

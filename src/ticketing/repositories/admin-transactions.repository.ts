@@ -31,7 +31,7 @@ export class AdminTransactionsRepository {
             prismaDb.event_ticket.findMany({
                 where,
                 include: {
-                    event: { select: { id: true, title: true, code: true } },
+                    event: { select: { id: true, title: true, code: true, event_date: true, city: true } },
                     customer: { select: { id: true, first_name: true, last_name: true, email: true } },
                 },
                 orderBy: { created_at: 'desc' },
@@ -82,7 +82,7 @@ export class AdminTransactionsRepository {
         return prismaDb.event_ticket.findUnique({
             where: { id },
             include: {
-                event: { select: { id: true, title: true, code: true } },
+                event: { select: { id: true, title: true, code: true, event_date: true, city: true } },
                 customer: { select: { id: true, first_name: true, last_name: true, email: true, phone: true } },
                 event_ticket_type: { select: { id: true, name: true, price: true } },
             },

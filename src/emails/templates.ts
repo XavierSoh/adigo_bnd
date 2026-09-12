@@ -33,8 +33,8 @@ function layout(lang: Language, title: string, bodyHtml: string, footerNote: str
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f0f5;padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;max-width:480px;width:100%;">
-        <tr><td style="background:${BRAND_GRADIENT};padding:28px 32px;">
-          <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:0.5px;">ADIGO</span>
+        <tr><td style="background:${BRAND_GRADIENT};padding:24px 32px;">
+          <img src="cid:adigo-logo" alt="ADIGO" height="32" style="display:block;height:32px;width:auto;border:0;">
         </td></tr>
         <tr><td style="padding:32px;color:#333333;font-size:15px;line-height:1.6;">
           <h1 style="font-size:19px;margin:0 0 16px;color:#222;">${title}</h1>

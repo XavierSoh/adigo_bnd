@@ -3,7 +3,18 @@ import { AgencyRepository } from "../repository/agency.repository";
 import { promises } from "dns";
 import { AgencyModel } from "../models/agency.model";
 
-export class AgencyController { 
+// multipart/form-data (this controller uses multer for the logo upload)
+// sends every field as a string — Prisma's Float? column rejects a raw
+// string, so latitude/longitude need explicit parsing before hitting the
+// repository, the same way `cities_served`'s comma-split already handles
+// its own form-data quirk below.
+function parseCoordinate(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const parsed = typeof value === 'number' ? value : parseFloat(value as string);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export class AgencyController {
     static async createAgency(req: Request, res: Response) {
         // Gestion du fichier logo (à implémenter selon votre middleware de fichiers)
         const logoPath = req.file?.path; // Si vous utilisez multer ou équivalent
@@ -12,7 +23,9 @@ export class AgencyController {
             ...req.body,
             cities_served: req.body.cities_served.split(',').map((city: string) => city.trim()),
             logo: logoPath,
-            created_by: created_by  
+            latitude: parseCoordinate(req.body.latitude),
+            longitude: parseCoordinate(req.body.longitude),
+            created_by: created_by
         };
 
         const response = await AgencyRepository.create(agencyData);
@@ -45,7 +58,9 @@ export class AgencyController {
         const updateData = {
             ...req.body,
             cities_served: req.body.cities_served?.split(',').map((city: string) => city.trim()),
-            logo: logoPath || req.body.logo
+            logo: logoPath || req.body.logo,
+            latitude: parseCoordinate(req.body.latitude),
+            longitude: parseCoordinate(req.body.longitude)
         };
 
         const response = await AgencyRepository.update(parseInt(id), updateData);

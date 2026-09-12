@@ -5,6 +5,7 @@
 
 import { Request, Response } from 'express';
 import rideService from '../../services/vtc/ride.service';
+import driverService from '../../services/vtc/driver.service';
 import { CreateRideDto, RateRideDto, CancelRideDto } from '../../models/vtc/ride.model';
 import { SocketService } from '../../services/socket.service';
 import { WalletRepository } from '../../repository/wallet.repository';
@@ -61,6 +62,19 @@ export class RideController {
       // the request body — same reasoning as the wallet/ticketing fixes.
       const data: CreateRideDto = { ...req.body, customerId: req.userId };
 
+      // Idempotent replay: if adigo_mobile already successfully created a
+      // ride with this exact key (e.g. this is a client retry after a
+      // network timeout on the first attempt's response), return that same
+      // ride — no second wallet debit, no second broadcast, no second row.
+      // Checked before the balance pre-check below on purpose: a replay
+      // must have zero side effects, not just avoid a double charge.
+      if (data.idempotencyKey) {
+        const existingRide = await rideService.findByIdempotencyKey(req.userId, data.idempotencyKey);
+        if (existingRide) {
+          return res.status(200).json({ success: true, data: existingRide, replay: true });
+        }
+      }
+
       // Same pattern as booking.controller.ts: pre-check the wallet balance
       // *before* creating anything when paying by wallet, so an
       // insufficient balance blocks the request cleanly instead of leaving
@@ -91,9 +105,16 @@ export class RideController {
       // moved between the check above and here), cancel the just-created
       // ride rather than leaving one on the books that was never paid.
       if (data.paymentMethod === 'wallet' && ride.total_fare > 0) {
+        // ride.total_fare is a Prisma Decimal, not a plain number — passed
+        // as-is, WalletRepository.recordRefund's `currentBalance + amount`
+        // string-concatenates instead of adding (Decimal.valueOf() returns
+        // a string, and `+` treats that specially, unlike `-`/`>`), silently
+        // corrupting the balance and failing inside its own try/catch
+        // without the caller ever seeing it. Convert explicitly everywhere
+        // a Decimal reaches a wallet helper, not just here.
         const paymentResult = await WalletRepository.recordPayment(
           req.userId,
-          ride.total_fare,
+          Number(ride.total_fare),
           `Course VTC #${ride.id}`
         );
         if (!paymentResult.status) {
@@ -110,11 +131,32 @@ export class RideController {
         ride.payment_status = paid?.payment_status ?? 'completed';
       }
 
-      SocketService.broadcastNewRideRequested(ride);
+      // Customer picked a specific driver from the "nearby drivers" list
+      // (GET /vtc/drivers/nearby) rather than requesting a ride and waiting
+      // for admin to assign one — offer it to that driver rather than
+      // locking them in outright: the driver still has to accept via PUT
+      // /vtc/rides/:id/respond (see RideService.offerToDriver/
+      // respondToOffer) before the ride is really theirs. A miss (the
+      // driver went offline or got taken by another customer in the few
+      // seconds since the nearby list was fetched) is not a booking
+      // failure — the ride (and its payment, if already charged above)
+      // still exists, it just falls back to the normal admin-assign queue
+      // like a driver-less request would.
+      let finalRide = ride;
+      if (data.driverId) {
+        const offered = await rideService.offerToDriver(ride.id, data.driverId);
+        if (offered) finalRide = offered;
+      }
+
+      if (finalRide.status === 'offered' || finalRide.status === 'accepted') {
+        SocketService.broadcastRideStatusChanged(finalRide);
+      } else {
+        SocketService.broadcastNewRideRequested(finalRide);
+      }
 
       return res.status(201).json({
         success: true,
-        data: ride
+        data: finalRide
       });
     } catch (error: any) {
       console.error('Error creating ride:', error);
@@ -190,7 +232,12 @@ export class RideController {
       const rideId = parseInt((req.params as { id: string }).id);
       const data: CancelRideDto = req.body;
 
-      const ride: any = await rideService.cancelRide(rideId, data);
+      // Refund-if-paid + broadcast now live in RideService.cancelRideWithRefund
+      // — shared with the auto-expiry sweep (VtcRideExpiryService) so the
+      // wallet rule (refund only when `payment_status === 'completed'`,
+      // fixed 2026-09-05 after it let a customer mint free wallet credit by
+      // cancelling an unpaid cash ride) can't drift between call sites again.
+      const ride: any = await rideService.cancelRideWithRefund(rideId, data);
 
       if (!ride) {
         // cancelRide's WHERE guards against re-cancelling an already
@@ -201,21 +248,6 @@ export class RideController {
           return res.status(404).json({ success: false, message: 'Ride not found' });
         }
         return res.status(400).json({ success: false, message: 'Course déjà annulée' });
-      }
-      SocketService.broadcastRideStatusChanged(ride);
-
-      // Cancellation always refunds to the wallet, regardless of the
-      // original payment method (cash, mobile money, or wallet) — same
-      // deliberate business decision already applied to booking
-      // cancellations (see BOOKING_MODULE_NOTES.md): there's no automated
-      // way to reverse a cash/mobile-money charge through the app, so
-      // crediting the wallet is how the refund actually reaches the client.
-      if (ride.total_fare > 0) {
-        await WalletRepository.recordRefund(
-          ride.customer_id,
-          ride.total_fare,
-          `Remboursement course VTC annulée #${ride.id} (payée via ${ride.payment_method})`
-        );
       }
 
       return res.json({
@@ -294,6 +326,120 @@ export class RideController {
   }
 
   /**
+   * GET /v1/api/vtc/rides/customer/current
+   * The authenticated customer's currently active ride, or null. Registered
+   * before GET /rides/:id in vtc.router.ts so "customer" isn't parsed as a
+   * ride id — same placement pattern as /rides/driver/current. Lets the
+   * mobile app resume watching a ride (rejoin its socket room) after a cold
+   * start instead of only ever knowing about one it just created itself.
+   */
+  async getCurrentRideForCustomer(req: Request, res: Response): Promise<Response> {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+      const ride = await rideService.getCurrentRideForCustomer(req.userId);
+      return res.json({ success: true, data: ride });
+    } catch (error: any) {
+      console.error('Error getting current ride for customer:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /v1/api/vtc/rides/:id/respond
+   * The driver answers a customer-chosen-driver offer (see
+   * RideController.createRide's driverId handling / RideService
+   * .offerToDriver). Resolved from the authenticated account's own
+   * vtc_drivers row, same as getCurrentRideForDriver below — a driver can
+   * only respond to their own offer, never one addressed to someone else.
+   */
+  async respondToOffer(req: Request, res: Response): Promise<Response> {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+      const driver = await driverService.getDriverByUserId(req.userId);
+      if (!driver) {
+        return res.status(404).json({ success: false, message: 'Aucun profil chauffeur pour ce compte' });
+      }
+
+      const rideId = parseInt((req.params as { id: string }).id);
+      const { accept } = req.body as { accept: boolean };
+      if (typeof accept !== 'boolean') {
+        return res.status(400).json({ success: false, message: 'accept (boolean) is required' });
+      }
+
+      const ride = await rideService.respondToOffer(rideId, driver.id, accept);
+      if (!ride) {
+        return res.status(409).json({
+          success: false,
+          message: "Cette offre n'est plus valide (déjà répondue ou expirée)"
+        });
+      }
+
+      SocketService.broadcastRideStatusChanged(ride);
+      if (!accept) {
+        // Back in the unassigned queue — same broadcast a fresh
+        // driver-less request gets, so the admin dispatch screen's list
+        // picks it back up.
+        SocketService.broadcastNewRideRequested(ride);
+      }
+
+      return res.json({ success: true, data: ride });
+    } catch (error: any) {
+      console.error('Error responding to ride offer:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /v1/api/rides/driver/current
+   * Driver mode home screen: the authenticated driver's currently active
+   * ride (accepted/arrived/started), or null if none. Registered before
+   * GET /rides/:id in vtc.router.ts so "driver" isn't parsed as an id.
+   */
+  async getCurrentRideForDriver(req: Request, res: Response): Promise<Response> {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+      const driver = await driverService.getDriverByUserId(req.userId);
+      if (!driver) {
+        return res.status(404).json({ success: false, message: "Aucun profil chauffeur pour ce compte" });
+      }
+      const ride = await rideService.getCurrentRideForDriver(driver.id);
+      return res.json({ success: true, data: ride });
+    } catch (error: any) {
+      console.error('Error getting current ride for driver:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/rides/driver/history
+   * Driver mode's "Mes courses" — this driver's own past (completed/
+   * cancelled) rides. Same "resolve the caller's own driver profile from
+   * their JWT" ownership pattern as getCurrentRideForDriver above.
+   */
+  async getRideHistoryForDriver(req: Request, res: Response): Promise<Response> {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+      const driver = await driverService.getDriverByUserId(req.userId);
+      if (!driver) {
+        return res.status(404).json({ success: false, message: "Aucun profil chauffeur pour ce compte" });
+      }
+      const rides = await rideService.getRideHistoryForDriver(driver.id);
+      return res.json({ success: true, data: rides });
+    } catch (error: any) {
+      console.error('Error getting ride history for driver:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * PUT /v1/api/vtc/rides/:id/status
    * Advance a ride through its lifecycle (accepted → arrived → started →
    * completed). Used by the driver mode and by admin as a manual override.
@@ -305,6 +451,22 @@ export class RideController {
 
       if (!status) {
         return res.status(400).json({ success: false, message: 'status is required' });
+      }
+
+      // Ownership: a staff/admin token may always advance a ride (manual
+      // override); a customer token may only if it resolves to the ride's
+      // own assigned driver. Was wide open to any authenticated user before
+      // Phase 2 gave drivers a resolvable identity — flagged but deferred
+      // since Phase 0 (VTC_MODULE_PLAN.md §0.1).
+      if (!req.userRole) {
+        const ride: any = await rideService.getRideById(rideId);
+        if (!ride) {
+          return res.status(404).json({ success: false, message: 'Ride not found' });
+        }
+        const driver = req.userId ? await driverService.getDriverByUserId(req.userId) : null;
+        if (!driver || ride.driver_id !== driver.id) {
+          return res.status(403).json({ success: false, message: "Vous n'êtes pas le chauffeur de cette course" });
+        }
       }
 
       const ride = await rideService.updateRideStatus(rideId, status);

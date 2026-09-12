@@ -10,6 +10,9 @@
  *   tsc only emits .js from .ts and silently drops the raw .sql files, so
  *   without this copy every migration script "succeeds" while skipping
  *   every step with "File not found" - reproduced and fixed 2026-09-03.)
+ * - src/emails/assets -> dist/src/emails/assets (email logo image,
+ *   attached by path from email.service.ts's compiled __dirname - same
+ *   class of bug as the migrations one above, fixed proactively this time.)
  */
 const fs = require('fs');
 const path = require('path');
@@ -36,5 +39,6 @@ copyDir(
     path.join(root, 'dist/src/migrations'),
     (name) => name.endsWith('.sql')
 );
+copyDir(path.join(root, 'src/emails/assets'), path.join(root, 'dist/src/emails/assets'));
 
-console.log('Copied static assets (public/, migration .sql files) into dist/');
+console.log('Copied static assets (public/, migration .sql files, email assets) into dist/');

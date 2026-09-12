@@ -3,6 +3,8 @@
 import UserModel from "../models/user.model";
 import { TripGenerationService } from "../services/tripGeneration.service";
 import { TripSchedulerService } from "../services/tripScheduler.service";
+import { migrateVtcRideIdempotency } from "./migrate_vtc_ride_idempotency";
+import vtcRideExpiryService from "../services/vtcRideExpiry.service";
 import initChatData from "./initChatData";
 import {
   kInitialLogin,
@@ -47,6 +49,8 @@ export default async function initFirstItems() {
 const tripScheduler = new TripSchedulerService();
 tripScheduler.startScheduling();
 
+vtcRideExpiryService.startScheduling();
+
 const generationService = new TripGenerationService();
 
 generationService.generateTripsForPeriod(
@@ -57,5 +61,9 @@ generationService.generateTripsForPeriod(
 
 // Initialiser les données du chat
 await initChatData();
+
+// Migration idempotente VTC (colonne idempotency_key) — sûre à ré-exécuter
+// à chaque démarrage, voir migrate_vtc_ride_idempotency.ts.
+await migrateVtcRideIdempotency();
 }
   

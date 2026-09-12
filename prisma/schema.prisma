@@ -47,6 +47,14 @@ model agency {
   phone                          String    @db.VarChar(20)
   email                          String?   @db.VarChar(100)
   logo                           String?   @db.VarChar(255)
+  // GPS coordinates for the agency's main location — lets the mobile app
+  // drop a map pin, and is the starting point for a future per-station
+  // "point d'embarquement" feature (agencies with several gares in the
+  // same city need one of these each, not just one on the agency itself,
+  // but this is the first real coordinate this system has ever stored for
+  // an agency).
+  latitude                       Float?
+  longitude                      Float?
   opening_hours                  String?   @db.VarChar(50)
   custom_hours                   Json?
   is_deleted                     Boolean?  @default(false)
@@ -940,10 +948,12 @@ model vtc_rides {
   actual_duration     Int?
   created_at          DateTime?           @default(now()) @db.Timestamp(6)
   updated_at          DateTime?           @default(now()) @db.Timestamp(6)
+  idempotency_key     String?             @db.VarChar(64)
   vtc_ride_tracking   vtc_ride_tracking[]
   customer            customer            @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vtc_drivers         vtc_drivers?        @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@unique([customer_id, idempotency_key], map: "idx_vtc_rides_idempotency_key", where: raw("(idempotency_key IS NOT NULL)"))
   @@index([customer_id], map: "idx_vtc_rides_customer")
   @@index([driver_id], map: "idx_vtc_rides_driver")
   @@index([status], map: "idx_vtc_rides_status")
