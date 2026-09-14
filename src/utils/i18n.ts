@@ -131,6 +131,26 @@ const translations: Record<Language, Translations> = {
         push_trip_reminder_title: 'Your trip is coming up',
         push_trip_reminder_body: 'Your trip {{departure}} → {{arrival}} departs in {{minutes}} min (at {{time}}). Seat {{seat}}.',
 
+        // Push notifications (VTC module)
+        push_vtc_ride_offered_title: 'New ride request',
+        push_vtc_ride_offered_body: 'A customer wants to be picked up at {{pickup}}.',
+        push_vtc_ride_accepted_title: 'Driver on the way',
+        push_vtc_ride_accepted_body: '{{driver}} accepted your ride and is on the way.',
+        push_vtc_driver_arrived_title: 'Your driver has arrived',
+        push_vtc_driver_arrived_body: '{{driver}} is waiting for you at the pickup point.',
+        push_vtc_ride_started_title: 'Ride started',
+        push_vtc_ride_started_body: 'Your ride to {{dropoff}} has started.',
+        push_vtc_ride_completed_title: 'Ride completed',
+        push_vtc_ride_completed_body: 'Your ride is over. Total fare: {{fare}} XAF (cash).',
+        push_vtc_ride_cancelled_title: 'Ride cancelled',
+        push_vtc_ride_cancelled_body: 'Your ride has been cancelled ({{reason}}).',
+        push_vtc_scheduled_ride_upcoming_title: 'Your scheduled ride is coming up',
+        push_vtc_scheduled_ride_upcoming_body: 'We are now looking for a driver for your ride at {{pickup}}.',
+        push_vtc_driver_verified_title: 'Account approved',
+        push_vtc_driver_verified_body: 'Your driver account has been approved. You can now go online.',
+        push_vtc_driver_rejected_title: 'Application not approved',
+        push_vtc_driver_rejected_body: 'Your driver application was not approved: {{notes}}',
+
         // Status
         status_active: 'active',
         status_suspended: 'suspended',
@@ -259,6 +279,26 @@ const translations: Record<Language, Translations> = {
         push_refund_credited_body: '{{amount}} FCFA ont été crédités sur votre portefeuille Adigo. Nouveau solde : {{balance}} FCFA.',
         push_trip_reminder_title: 'Votre voyage approche',
         push_trip_reminder_body: 'Votre voyage {{departure}} → {{arrival}} part dans {{minutes}} min (à {{time}}). Siège {{seat}}.',
+
+        // Notifications push (module VTC)
+        push_vtc_ride_offered_title: 'Nouvelle demande de course',
+        push_vtc_ride_offered_body: 'Un client souhaite être pris en charge à {{pickup}}.',
+        push_vtc_ride_accepted_title: 'Chauffeur en route',
+        push_vtc_ride_accepted_body: '{{driver}} a accepté votre course et arrive.',
+        push_vtc_driver_arrived_title: 'Votre chauffeur est arrivé',
+        push_vtc_driver_arrived_body: '{{driver}} vous attend au point de prise en charge.',
+        push_vtc_ride_started_title: 'Course démarrée',
+        push_vtc_ride_started_body: 'Votre course vers {{dropoff}} a commencé.',
+        push_vtc_ride_completed_title: 'Course terminée',
+        push_vtc_ride_completed_body: 'Votre course est terminée. Montant total : {{fare}} FCFA (en espèces).',
+        push_vtc_ride_cancelled_title: 'Course annulée',
+        push_vtc_ride_cancelled_body: 'Votre course a été annulée ({{reason}}).',
+        push_vtc_scheduled_ride_upcoming_title: 'Votre course programmée approche',
+        push_vtc_scheduled_ride_upcoming_body: 'Nous recherchons maintenant un chauffeur pour votre course à {{pickup}}.',
+        push_vtc_driver_verified_title: 'Compte approuvé',
+        push_vtc_driver_verified_body: 'Votre compte chauffeur a été approuvé. Vous pouvez maintenant passer en ligne.',
+        push_vtc_driver_rejected_title: "Candidature non retenue",
+        push_vtc_driver_rejected_body: "Votre candidature chauffeur n'a pas été retenue : {{notes}}",
 
         // Statuts
         status_active: 'actif',

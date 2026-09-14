@@ -3,11 +3,14 @@
  * API routes for VTC/Taxi module
  */
 
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
 import { Router } from 'express';
 import rideController from '../controllers/vtc/ride.controller';
 import driverController from '../controllers/vtc/driver.controller';
 import trackingController from '../controllers/vtc/tracking.controller';
-import { authMiddleware } from '../middleware/auth.middleware';
+import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth.middleware';
 import { adminRoleMiddleware } from '../middleware/admin-role.middleware';
 import { createUploader } from '../config/multer.config';
 
@@ -15,10 +18,38 @@ const router = Router();
 
 /**
  * Driver photo + vehicle documents (registration/"carte grise" scan, up to
- * 6 vehicle photos) — same createUploader factory other modules use
- * (agency logo, etc.), just parameterized to its own folder.
+ * 6 vehicle photos). `photo`/`vehiclePhotos` go through the normal
+ * `createUploader` factory (uploads/vtc-drivers/, served publicly via
+ * app.ts's `express.static('/uploads', ...)`) — intentional, a driver's
+ * face and car photos are meant to be customer-visible, same as any
+ * ride-hailing app.
+ *
+ * `registrationDocument` ("carte grise") is different: it can carry the
+ * vehicle owner's real name/address, and — flagged live 2026-09-13 during
+ * a production-readiness audit — was reachable by *anyone* who ever saw
+ * its URL, forever, with zero authentication (the blanket static mount
+ * doesn't check who's asking). Routed to a sibling directory the static
+ * mount can never reach at all, rather than layering an auth check in
+ * front of the same public folder — the file is physically inaccessible
+ * except through GET /vtc/drivers/:id/registration-document below, which
+ * does check staff-or-owning-driver.
  */
-const driverDocumentsUpload = createUploader('vtc-drivers').fields([
+const driverDocumentsUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dest = file.fieldname === 'registrationDocument'
+        ? 'uploads-private/vtc-drivers/'
+        : 'uploads/vtc-drivers/';
+      fs.mkdirSync(dest, { recursive: true });
+      cb(null, dest);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 1024 * 1024 * 5 },
+}).fields([
   { name: 'photo', maxCount: 1 },
   { name: 'registrationDocument', maxCount: 1 },
   { name: 'vehiclePhotos', maxCount: 6 },
@@ -32,7 +63,46 @@ const driverDocumentsUpload = createUploader('vtc-drivers').fields([
  * GET /v1/api/vtc/estimate
  * Estimate ride cost and duration
  */
-router.get('/estimate', rideController.estimateRide.bind(rideController));
+// optionalAuthMiddleware, not authMiddleware: anonymous price-checking must
+// keep working (never 401s), but req.userId needs to be populated when a
+// token IS present so a promo code's per-customer "already used" check can
+// actually run (see RideController.estimateRide's promoCode handling).
+router.get('/estimate', optionalAuthMiddleware, rideController.estimateRide.bind(rideController));
+
+/**
+ * GET /v1/api/vtc/surge/current
+ * Current global surge multiplier + the raw demand/supply counts behind it
+ * — see RideService.getSurgeStatus.
+ */
+router.get('/surge/current', rideController.getSurgeStatus.bind(rideController));
+
+/**
+ * GET /v1/api/vtc/promo-codes/active
+ * Public — every currently-usable VTC promo code — see PromoService.listActive.
+ */
+router.get('/promo-codes/active', rideController.getActivePromoCodes.bind(rideController));
+
+/**
+ * Commission / revenu Adigo — admin-only, see CommissionService.
+ */
+router.get(
+  '/commission/summary',
+  authMiddleware,
+  adminRoleMiddleware,
+  rideController.getCommissionSummary.bind(rideController)
+);
+router.get(
+  '/commission/by-driver',
+  authMiddleware,
+  adminRoleMiddleware,
+  rideController.getCommissionByDriver.bind(rideController)
+);
+router.put(
+  '/commission/:id/settle',
+  authMiddleware,
+  adminRoleMiddleware,
+  rideController.settleCommission.bind(rideController)
+);
 
 /**
  * GET /v1/api/vtc/rides/admin/all
@@ -220,6 +290,18 @@ router.get(
 );
 
 /**
+ * GET /v1/api/vtc/drivers/pending
+ * Admin's driver-verification queue — must stay before GET /drivers/:id,
+ * same reasoning as /nearby and /me above.
+ */
+router.get(
+  '/drivers/pending',
+  authMiddleware,
+  adminRoleMiddleware,
+  driverController.getPendingDrivers.bind(driverController)
+);
+
+/**
  * GET /v1/api/vtc/drivers/:id
  * Get driver details
  */
@@ -232,6 +314,16 @@ router.get('/drivers/:id', driverController.getDriver.bind(driverController));
  * rough ETA to the customer's pickup point.
  */
 router.get('/drivers/:id/profile', driverController.getDriverProfile.bind(driverController));
+
+/**
+ * GET /v1/api/vtc/drivers/:id/registration-document
+ * Staff or the driver themselves only — see the controller's doc comment.
+ */
+router.get(
+  '/drivers/:id/registration-document',
+  authMiddleware,
+  driverController.getRegistrationDocument.bind(driverController)
+);
 
 /**
  * PUT /v1/api/vtc/drivers/:id
@@ -261,5 +353,18 @@ router.put('/drivers/:id/location', authMiddleware, driverController.updateLocat
  * above — was unauthenticated, now just requires a valid token.
  */
 router.put('/drivers/:id/status', authMiddleware, driverController.updateStatus.bind(driverController));
+
+/**
+ * PUT /v1/api/vtc/drivers/:id/verify
+ * Admin approves or rejects a driver's submitted documents — the gate a
+ * self-registered driver can't get around by itself (see
+ * DriverService.updateDriverStatus, which refuses 'online' otherwise).
+ */
+router.put(
+  '/drivers/:id/verify',
+  authMiddleware,
+  adminRoleMiddleware,
+  driverController.verifyDriver.bind(driverController)
+);
 
 export default router;

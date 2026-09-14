@@ -46,6 +46,17 @@ export class VtcRideExpiryService {
       } catch (error) {
         console.error('Erreur VtcRideExpiryService (offres):', error);
       }
+
+      // Courses programmées — promeut toute course 'scheduled' arrivant à
+      // échéance (voir RideService.promoteDueScheduledRides).
+      try {
+        const promoted = await rideService.promoteDueScheduledRides();
+        if (promoted.length > 0) {
+          console.log(`⏱️ VTC: ${promoted.length} course(s) programmée(s) passée(s) en recherche de chauffeur`);
+        }
+      } catch (error) {
+        console.error('Erreur VtcRideExpiryService (programmées):', error);
+      }
     });
   }
 }

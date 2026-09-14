@@ -49,6 +49,16 @@ export interface VtcDriver {
   currentLongitude?: number;
   lastLocationUpdate?: Date;
 
+  // Vetting — distinct from `status` above (operational), this is whether
+  // an admin has actually reviewed this driver's documents. A self-
+  // registered driver can never go 'online' while this isn't 'approved' —
+  // see DriverService.updateDriverStatus. Admin-onboarded drivers
+  // (POST /vtc/drivers) are approved automatically — a staff member
+  // entering the record by hand already is the vetting step.
+  verificationStatus?: 'pending' | 'approved' | 'rejected';
+  verificationNotes?: string;
+  verifiedAt?: Date;
+
   // Timestamps
   createdAt: Date;
   updatedAt: Date;
@@ -86,6 +96,11 @@ export interface CreateDriverDto {
   insuranceExpiry?: Date;
   registrationDocument?: string;
   vehiclePhotos?: string[];
+  // Not settable by a self-registering driver (registerSelf never passes
+  // this through) — only DriverController.createDriver, the admin-only
+  // onboarding endpoint, sets it explicitly to 'approved'. Defaults to
+  // 'pending' in DriverService.createDriver when omitted.
+  verificationStatus?: 'pending' | 'approved' | 'rejected';
 }
 
 export interface UpdateDriverLocationDto {
@@ -118,6 +133,14 @@ export interface UpdateDriverDto {
   registrationDocument?: string;
   vehiclePhotos?: string[];
   status?: 'online' | 'offline' | 'busy' | 'suspended';
+}
+
+/** PUT /vtc/drivers/:id/verify (admin-only) — approve or reject a driver's
+ * submitted documents. `notes` is required when rejecting (the driver needs
+ * to know what to fix) and stored either way for an audit trail. */
+export interface VerifyDriverDto {
+  approved: boolean;
+  notes?: string;
 }
 
 export interface DriverStatus {

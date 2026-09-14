@@ -83,6 +83,26 @@ export interface CreateRideDto {
    * admin-assign queue.
    */
   driverId?: number;
+  /**
+   * Courses programmées — "manquements vs. Uber/Bolt/inDrive" audit,
+   * 2026-09-13/14. ISO datetime, must be ≥30 minutes in the future
+   * (RideController.createRide validates this). When set, the ride is
+   * created `status: 'scheduled'` with `pickup_time` set to this value and
+   * no driver search/offer happens yet — see
+   * VtcRideExpiryService/RideService.promoteDueScheduledRides, which flips
+   * it to 'requested' (the normal pipeline from there on) once it's within
+   * 15 minutes of this time.
+   */
+  scheduledFor?: string;
+  /** Codes promo — see PromoService. Re-validated server-side in the controller, never trusted as-is. */
+  promoCode?: string;
+  /**
+   * Internal only — computed by RideController.createRide from a
+   * fresh PromoService.preview() and threaded through to
+   * RideService.createRide, which subtracts it from the fare it would
+   * otherwise have charged. Never comes from the request body directly.
+   */
+  promoDiscountAmount?: number;
 }
 
 export interface RideEstimate {
@@ -103,7 +123,7 @@ export interface RateRideDto {
 
 export interface CancelRideDto {
   reason: string;
-  cancelledBy: 'customer' | 'driver' | 'system';
+  cancelledBy: 'customer' | 'driver' | 'system' | 'admin';
 }
 
 /**
@@ -112,6 +132,10 @@ export interface CancelRideDto {
  * any non-terminal state via the separate /cancel endpoint, not this map.
  */
 export const RIDE_STATUS_TRANSITIONS: Record<string, string[]> = {
+  // Promoted to 'requested' by RideService.promoteDueScheduledRides, not
+  // through this generic status endpoint — listed here for documentation
+  // only (see that method's own direct Prisma update).
+  scheduled: ['requested'],
   requested: ['accepted'],
   accepted: ['arrived'],
   arrived: ['started'],

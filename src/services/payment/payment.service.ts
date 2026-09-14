@@ -108,7 +108,26 @@ export class PaymentService {
 
         try {
             const providerClient = getPaymentProvider(provider);
-            const payToken = await providerClient.initPayment();
+            // One retry on init specifically: found live via real
+            // payment_transaction rows — a handful of real booking payments
+            // failed with a bare "401" at this exact step (no payToken ever
+            // obtained) while the OAuth token step and a same-moment manual
+            // retest both succeeded fine, pointing to a transient blip
+            // (token cache edge, a brief provider hiccup) rather than a
+            // real credential problem. Previously any failure here
+            // immediately cancelled the whole booking with no second
+            // chance — not worth making the customer re-book over a
+            // one-off glitch. Deliberately not retrying executePayment
+            // itself: once Orange Money has pushed a confirmation prompt
+            // to the customer's phone, retrying that call risks a second,
+            // duplicate prompt.
+            let payToken: string;
+            try {
+                payToken = await providerClient.initPayment();
+            } catch (initError) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                payToken = await providerClient.initPayment();
+            }
             await PaymentTransactionRepository.setPayToken(transaction.id, payToken);
 
             const payResult = await providerClient.executePayment({
@@ -132,9 +151,16 @@ export class PaymentService {
                 code: 200,
             };
         } catch (error: any) {
-            const message = error?.message || "Erreur du fournisseur de paiement";
-            await PaymentTransactionRepository.updateStatus(transaction.id, 'failed', undefined, message);
-            return { status: false, message, code: 502 };
+            const rawMessage = error?.message || "Erreur du fournisseur de paiement";
+            await PaymentTransactionRepository.updateStatus(transaction.id, 'failed', undefined, rawMessage);
+            // The raw message (Orange Money's own code-prefixed format, e.g.
+            // "60019 ::  Le solde du compte du payeur est insuffisant") is
+            // what's stored above for admin/debugging — friendlyProviderError
+            // exists specifically to keep that internal string out of what
+            // the customer actually sees, but was never called here, so the
+            // raw provider text reached the mobile app verbatim. Flagged
+            // live 2026-09-13: "le bon message ne s'affiche pas au user".
+            return { status: false, message: friendlyProviderError(rawMessage, params.lang), code: 502 };
         }
     }
 

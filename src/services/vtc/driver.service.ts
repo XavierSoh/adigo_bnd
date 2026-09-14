@@ -16,6 +16,15 @@ import {
   DriverReview,
 } from '../../models/vtc/driver.model';
 
+/** Thrown by updateDriverStatus when a not-yet-approved driver tries to go
+ * 'online' — see that method's doc comment. */
+export class DriverNotVerifiedError extends Error {
+  constructor() {
+    super('DRIVER_NOT_VERIFIED');
+    this.name = 'DriverNotVerifiedError';
+  }
+}
+
 export class DriverService {
   /**
    * Create a driver record. There is no driver-facing app yet — drivers are
@@ -55,6 +64,11 @@ export class DriverService {
         registration_document: data.registrationDocument ?? null,
         vehicle_photos: data.vehiclePhotos ?? undefined,
         status: 'offline',
+        // Defaults to 'pending' — only DriverController.createDriver (the
+        // admin-only onboarding route) ever passes 'approved' explicitly.
+        // A self-registered driver (registerSelf) can't go 'online' until
+        // an admin reviews their documents — see updateDriverStatus below.
+        verification_status: data.verificationStatus ?? 'pending',
       } as Prisma.vtc_driversUncheckedCreateInput,
     });
     return result as unknown as VtcDriver;
@@ -270,6 +284,20 @@ export class DriverService {
     driverId: number,
     status: 'online' | 'offline' | 'busy' | 'suspended'
   ): Promise<VtcDriver | null> {
+    // The one real enforcement point of the whole verification workflow:
+    // going 'online' is what actually lets a driver receive rides, so it's
+    // the one transition worth blocking — offline/busy/suspended stay
+    // unrestricted (a driver who's already 'online' from before this
+    // feature existed, or who's mid-ride, must still be able to update
+    // their own state). A driver with no verification_status at all (NULL,
+    // shouldn't happen post-migration, but not fatal if it does) is
+    // treated as not-yet-approved rather than silently let through.
+    if (status === 'online') {
+      const driver = await prismaDb.vtc_drivers.findUnique({ where: { id: driverId }, select: { verification_status: true } });
+      if (driver?.verification_status !== 'approved') {
+        throw new DriverNotVerifiedError();
+      }
+    }
     try {
       const result = await prismaDb.vtc_drivers.update({ where: { id: driverId }, data: { status } });
       return result as unknown as VtcDriver;
@@ -279,6 +307,39 @@ export class DriverService {
       }
       throw error;
     }
+  }
+
+  /** Admin decision on a driver's submitted documents. */
+  async setVerificationStatus(
+    driverId: number,
+    approved: boolean,
+    notes?: string
+  ): Promise<VtcDriver | null> {
+    try {
+      const result = await prismaDb.vtc_drivers.update({
+        where: { id: driverId },
+        data: {
+          verification_status: approved ? 'approved' : 'rejected',
+          verification_notes: notes ?? null,
+          verified_at: new Date(),
+        },
+      });
+      return result as unknown as VtcDriver;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** The admin review queue. */
+  async getPendingDrivers(): Promise<VtcDriver[]> {
+    const rows = await prismaDb.vtc_drivers.findMany({
+      where: { verification_status: 'pending' },
+      orderBy: { created_at: 'asc' },
+    });
+    return rows as unknown as VtcDriver[];
   }
 
   /**

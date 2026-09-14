@@ -105,15 +105,18 @@ describe('PaymentService.initiate', () => {
         expect(mockedInitPayment).not.toHaveBeenCalled();
     });
 
-    it('marks the transaction failed and surfaces a translated message when Orange Money rejects the charge', async () => {
+    it('marks the transaction failed when Orange Money keeps rejecting the charge (init fails on both the first attempt and the retry)', async () => {
         mockedCreate.mockResolvedValueOnce({
             status: true,
             body: { id: 2, purpose: 'wallet_topup', order_id: 'ADG-2', customer_id: 10 },
             code: 201,
         });
         // Orange Money's own raw, code-prefixed error format — see
-        // PaymentService's ORANGE_MONEY_ERROR_MESSAGES doc comment.
-        mockedInitPayment.mockRejectedValueOnce(
+        // PaymentService's ORANGE_MONEY_ERROR_MESSAGES doc comment. Both
+        // calls reject (the initial attempt and initiate()'s single retry
+        // — see that method's doc comment) so this exercises a genuinely
+        // persistent failure, not one the retry recovers from.
+        mockedInitPayment.mockRejectedValue(
             new Error('60019 ::  Le solde du compte du payeur est insuffisant')
         );
         mockedUpdateStatus.mockResolvedValueOnce({ status: true, body: {}, code: 200 });
@@ -128,8 +131,50 @@ describe('PaymentService.initiate', () => {
 
         expect(result.status).toBe(false);
         expect(result.code).toBe(502);
+        expect(mockedInitPayment).toHaveBeenCalledTimes(2);
         // The raw provider message is stored in the ledger for admin/debugging...
         expect(mockedUpdateStatus).toHaveBeenCalledWith(2, 'failed', undefined, expect.stringContaining('60019'));
+        // ...but the customer-facing message must be the translated one, not
+        // Orange Money's own raw, code-prefixed string verbatim. Regression
+        // test for a real bug: friendlyProviderError existed and was fully
+        // wired up but never actually called from this catch block, so the
+        // raw provider text reached the mobile app unchanged. Flagged live
+        // 2026-09-13: "le bon message ne s'affiche pas au user".
+        expect(result.message).not.toContain('60019');
+        expect(result.message).toContain('Solde Orange Money insuffisant');
+    });
+
+    it('recovers from a single transient init failure via its one retry', async () => {
+        mockedCreate.mockResolvedValueOnce({
+            status: true,
+            body: { id: 15, purpose: 'booking', order_id: 'BOO123', customer_id: 10 },
+            code: 201,
+        });
+        // Found live 2026-09-13: real booking payments failed with a bare
+        // 401 at this exact step while the OAuth token step (and a
+        // same-moment manual retest) succeeded — a transient blip, not a
+        // real credential problem. One retry should quietly recover.
+        mockedInitPayment
+            .mockRejectedValueOnce(new Error('Échec d\'initialisation du paiement Orange Money (401)'))
+            .mockResolvedValueOnce('MP999');
+        mockedExecutePayment.mockResolvedValueOnce({
+            payToken: 'MP999',
+            status: 'PENDING',
+            txnId: 'TXN15',
+        });
+        mockedUpdateStatus.mockResolvedValueOnce({ status: true, body: { id: 15, status: 'pending' }, code: 200 });
+
+        const result = await PaymentService.initiate({
+            customerId: 10,
+            purpose: 'booking',
+            subscriberMsisdn: '677000000',
+            amount: 3500,
+            description: 'Réservation',
+        });
+
+        expect(result.status).toBe(true);
+        expect((result.body as any).payToken).toBe('MP999');
+        expect(mockedInitPayment).toHaveBeenCalledTimes(2);
     });
 });
 

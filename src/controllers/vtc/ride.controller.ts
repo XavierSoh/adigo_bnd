@@ -10,6 +10,9 @@ import { CreateRideDto, RateRideDto, CancelRideDto } from '../../models/vtc/ride
 import { SocketService } from '../../services/socket.service';
 import { WalletRepository } from '../../repository/wallet.repository';
 import { I18n } from '../../utils/i18n';
+import { VtcNotificationService } from '../../services/vtc/vtcNotification.service';
+import promoService from '../../services/vtc/promo.service';
+import commissionService from '../../services/vtc/commission.service';
 
 export class RideController {
   /**
@@ -18,7 +21,7 @@ export class RideController {
    */
   async estimateRide(req: Request, res: Response): Promise<Response> {
     try {
-      const { pickupLat, pickupLon, dropoffLat, dropoffLon, vehicleType } = req.query;
+      const { pickupLat, pickupLon, dropoffLat, dropoffLon, vehicleType, promoCode } = req.query;
 
       if (!pickupLat || !pickupLon || !dropoffLat || !dropoffLon || !vehicleType) {
         return res.status(400).json({
@@ -27,13 +30,35 @@ export class RideController {
         });
       }
 
-      const estimate = await rideService.estimateRide(
+      const estimate: any = await rideService.estimateRide(
         parseFloat(pickupLat as string),
         parseFloat(pickupLon as string),
         parseFloat(dropoffLat as string),
         parseFloat(dropoffLon as string),
         vehicleType as any
       );
+
+      // Codes promo — preview only, never blocks the base estimate. This
+      // route uses optionalAuthMiddleware (anonymous price-checking must
+      // keep working), so req.userId is only populated when a real token
+      // was sent — a promo code can only actually be validated for a
+      // logged-in customer, the per-customer "already used" check is
+      // meaningless otherwise. The booking flow that actually has a
+      // promo-code field is itself only ever reachable already logged in,
+      // so this never blocks a real user.
+      if (promoCode) {
+        const preview = req.userId
+          ? await promoService.preview(promoCode as string, req.userId, estimate.totalFare)
+          : { valid: false, reason: 'Connectez-vous pour utiliser un code promo' };
+        estimate.promoCode = {
+          valid: preview.valid,
+          reason: preview.reason ?? null,
+          discountAmount: preview.discountAmount ?? 0,
+        };
+        if (preview.valid) {
+          estimate.totalFareAfterPromo = estimate.totalFare - (preview.discountAmount ?? 0);
+        }
+      }
 
       return res.json({
         success: true,
@@ -45,6 +70,87 @@ export class RideController {
         success: false,
         message: error.message
       });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/surge/current
+   * Transparency endpoint — the same computation estimateRide already uses
+   * to freeze a multiplier onto a new ride, exposed standalone so the
+   * customer app can show a "high demand" badge before the user even fills
+   * in pickup/dropoff, and so adigo2's dispatch screen can show it live.
+   */
+  async getSurgeStatus(req: Request, res: Response): Promise<Response> {
+    try {
+      const status = await rideService.getSurgeStatus();
+      return res.json({ success: true, data: status });
+    } catch (error: any) {
+      console.error('Error getting surge status:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/promo-codes/active
+   * Every currently-usable VTC promo code — public/read-only (just a
+   * promotional list, no per-customer state), powers the mobile
+   * "Promotions" drawer entry (previously a dead "bientôt disponible" stub).
+   */
+  async getActivePromoCodes(req: Request, res: Response): Promise<Response> {
+    try {
+      const promoCodes = await promoService.listActive();
+      return res.json({ success: true, data: promoCodes });
+    } catch (error: any) {
+      console.error('Error listing active promo codes:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/commission/summary
+   * Admin — global commission totals (pending vs. settled) for the
+   * dispatch screen's "Commission" tab header. See CommissionService.
+   */
+  async getCommissionSummary(req: Request, res: Response): Promise<Response> {
+    try {
+      const summary = await commissionService.getSummary();
+      return res.json({ success: true, data: summary });
+    } catch (error: any) {
+      console.error('Error getting commission summary:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/commission/by-driver
+   * Admin — every commission ledger row, driver identity joined in.
+   */
+  async getCommissionByDriver(req: Request, res: Response): Promise<Response> {
+    try {
+      const rows = await commissionService.getByDriver();
+      return res.json({ success: true, data: rows });
+    } catch (error: any) {
+      console.error('Error getting commission by driver:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /v1/api/vtc/commission/:id/settle
+   * Admin marks a 'pending' commission row settled by hand (cash/mobile-
+   * money collected in person from a driver with no linked wallet).
+   */
+  async settleCommission(req: Request, res: Response): Promise<Response> {
+    try {
+      const ledgerId = parseInt((req.params as { id: string }).id);
+      const settled = await commissionService.settle(ledgerId, req.userId);
+      if (!settled) {
+        return res.status(404).json({ success: false, message: 'Ligne de commission introuvable ou déjà réglée' });
+      }
+      return res.json({ success: true, data: settled });
+    } catch (error: any) {
+      console.error('Error settling commission:', error);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 
@@ -62,6 +168,19 @@ export class RideController {
       // the request body — same reasoning as the wallet/ticketing fixes.
       const data: CreateRideDto = { ...req.body, customerId: req.userId };
 
+      // Courses programmées: reject anything too close to now to actually
+      // be worth scheduling rather than just booking immediately — also
+      // guards against a client sending an already-past datetime.
+      if (data.scheduledFor) {
+        const scheduledDate = new Date(data.scheduledFor);
+        if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now() + 30 * 60 * 1000) {
+          return res.status(400).json({
+            success: false,
+            message: 'scheduledFor doit être une date valide au moins 30 minutes dans le futur',
+          });
+        }
+      }
+
       // Idempotent replay: if adigo_mobile already successfully created a
       // ride with this exact key (e.g. this is a client retry after a
       // network timeout on the first attempt's response), return that same
@@ -75,6 +194,28 @@ export class RideController {
         }
       }
 
+      // Codes promo — re-validated from scratch here (never trusts a
+      // client-supplied "the preview said this was valid a moment ago":
+      // the estimate's own promo preview is read-only and can go stale by
+      // the time the booking button is actually tapped). Rejected outright
+      // when the customer explicitly supplied a code that turns out
+      // invalid — silently booking at full price instead would be more
+      // confusing than a clear error naming why.
+      let promoDiscountAmount = 0;
+      if (data.promoCode) {
+        const preEstimate = await rideService.estimateRide(
+          data.pickupLatitude, data.pickupLongitude,
+          data.dropoffLatitude, data.dropoffLongitude,
+          data.vehicleType
+        );
+        const promoPreview = await promoService.preview(data.promoCode, req.userId, preEstimate.totalFare);
+        if (!promoPreview.valid) {
+          return res.status(400).json({ success: false, message: promoPreview.reason || 'Code promo invalide' });
+        }
+        promoDiscountAmount = promoPreview.discountAmount ?? 0;
+        data.promoDiscountAmount = promoDiscountAmount;
+      }
+
       // Same pattern as booking.controller.ts: pre-check the wallet balance
       // *before* creating anything when paying by wallet, so an
       // insufficient balance blocks the request cleanly instead of leaving
@@ -85,21 +226,37 @@ export class RideController {
           data.dropoffLatitude, data.dropoffLongitude,
           data.vehicleType
         );
+        const requiredAmount = Math.max(0, estimate.totalFare - promoDiscountAmount);
         const balanceCheck = await WalletRepository.getBalance(req.userId);
         const currentBalance = balanceCheck.status ? (balanceCheck.body?.wallet_balance ?? 0) : 0;
 
-        if (currentBalance < estimate.totalFare) {
+        if (currentBalance < requiredAmount) {
           return res.status(400).json({
             success: false,
             message: I18n.t('insufficient_wallet_balance', req.lang, {
               current: currentBalance.toString(),
-              required: estimate.totalFare.toString()
+              required: requiredAmount.toString()
             })
           });
         }
       }
 
       const ride: any = await rideService.createRide(data);
+
+      // Record the redemption now that the ride actually exists (needed
+      // for the promo_code_usage row's vtc_ride_id) — re-validates once
+      // more, closing the (very small) race window between the pre-check
+      // above and this point. In the rare case that loses the race (two
+      // simultaneous bookings both passed the pre-check, only one can win
+      // the DB-level unique constraint), the ride still proceeds at the
+      // already-discounted price computed above rather than failing an
+      // already-created booking over it — a rare, low-stakes inconsistency
+      // preferred over a half-created ride.
+      if (data.promoCode && promoDiscountAmount > 0) {
+        promoService.redeem(data.promoCode, req.userId, ride.id, Number(ride.total_fare) + promoDiscountAmount).catch((err) =>
+          console.error('[PromoService] redeem failed:', err)
+        );
+      }
 
       // Charge the wallet now that the ride exists. If this fails (balance
       // moved between the check above and here), cancel the just-created
@@ -150,9 +307,17 @@ export class RideController {
 
       if (finalRide.status === 'offered' || finalRide.status === 'accepted') {
         SocketService.broadcastRideStatusChanged(finalRide);
-      } else {
+        if (finalRide.status === 'offered') {
+          VtcNotificationService.sendRideOffered(finalRide.id).catch((err) =>
+            console.error('[VtcNotification] sendRideOffered failed:', err)
+          );
+        }
+      } else if (finalRide.status === 'requested') {
         SocketService.broadcastNewRideRequested(finalRide);
       }
+      // status === 'scheduled': no driver search yet, nothing to broadcast
+      // to the dispatch queue — VtcRideExpiryService.promoteDueScheduledRides
+      // broadcasts it for real once it's actually promoted to 'requested'.
 
       return res.status(201).json({
         success: true,
@@ -232,12 +397,40 @@ export class RideController {
       const rideId = parseInt((req.params as { id: string }).id);
       const data: CancelRideDto = req.body;
 
+      // Ownership: this had NO check at all — any authenticated account
+      // (any customer or driver, not just this ride's own) could cancel
+      // any ride by id, up to and including triggering a real wallet
+      // refund onto a stranger's ride. Flagged live 2026-09-13 during a
+      // production-readiness audit. Same "staff, or resolve who this is
+      // and check it's actually theirs" pattern already used by
+      // updateStatus/recordPoint — a cancel can legitimately come from
+      // either the ride's own customer or its assigned driver, not just
+      // staff.
+      if (!req.userRole) {
+        const existing: any = await rideService.getRideById(rideId);
+        if (!existing) {
+          return res.status(404).json({ success: false, message: 'Ride not found' });
+        }
+        const isOwnCustomer = req.userId != null && existing.customer_id === req.userId;
+        const driver = req.userId ? await driverService.getDriverByUserId(req.userId) : null;
+        const isOwnDriver = driver != null && existing.driver_id === driver.id;
+        if (!isOwnCustomer && !isOwnDriver) {
+          return res.status(403).json({ success: false, message: "Vous n'êtes pas autorisé à annuler cette course" });
+        }
+      }
+
       // Refund-if-paid + broadcast now live in RideService.cancelRideWithRefund
       // — shared with the auto-expiry sweep (VtcRideExpiryService) so the
       // wallet rule (refund only when `payment_status === 'completed'`,
       // fixed 2026-09-05 after it let a customer mint free wallet credit by
       // cancelling an unpaid cash ride) can't drift between call sites again.
       const ride: any = await rideService.cancelRideWithRefund(rideId, data);
+
+      if (ride) {
+        VtcNotificationService.sendRideCancelled(ride.id, ride.cancelled_by).catch((err) =>
+          console.error('[VtcNotification] sendRideCancelled failed:', err)
+        );
+      }
 
       if (!ride) {
         // cancelRide's WHERE guards against re-cancelling an already
@@ -311,6 +504,9 @@ export class RideController {
         });
       }
       SocketService.broadcastRideStatusChanged(ride);
+      VtcNotificationService.sendRideAccepted(ride.id).catch((err) =>
+        console.error('[VtcNotification] sendRideAccepted failed:', err)
+      );
 
       return res.json({
         success: true,
@@ -384,6 +580,10 @@ export class RideController {
         // driver-less request gets, so the admin dispatch screen's list
         // picks it back up.
         SocketService.broadcastNewRideRequested(ride);
+      } else {
+        VtcNotificationService.sendRideAccepted(ride.id).catch((err) =>
+          console.error('[VtcNotification] sendRideAccepted failed:', err)
+        );
       }
 
       return res.json({ success: true, data: ride });
@@ -475,6 +675,26 @@ export class RideController {
         return res.status(404).json({ success: false, message: 'Ride not found' });
       }
       SocketService.broadcastRideStatusChanged(ride);
+
+      if (status === 'arrived') {
+        VtcNotificationService.sendDriverArrived(ride.id).catch((err) =>
+          console.error('[VtcNotification] sendDriverArrived failed:', err)
+        );
+      } else if (status === 'started') {
+        VtcNotificationService.sendRideStarted(ride.id).catch((err) =>
+          console.error('[VtcNotification] sendRideStarted failed:', err)
+        );
+      } else if (status === 'completed') {
+        VtcNotificationService.sendRideCompleted(ride.id).catch((err) =>
+          console.error('[VtcNotification] sendRideCompleted failed:', err)
+        );
+        // Commission / revenu Adigo — see CommissionService.recordForCompletedRide.
+        // Best-effort, same as every other post-completion side effect here:
+        // never blocks or fails the status update itself.
+        commissionService.recordForCompletedRide(ride.id).catch((err) =>
+          console.error('[CommissionService] recordForCompletedRide failed:', err)
+        );
+      }
 
       return res.json({ success: true, data: ride });
     } catch (error: any) {

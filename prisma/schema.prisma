@@ -284,6 +284,7 @@ model customer {
   payment_transaction                                          payment_transaction[]
   promo_code_promo_code_created_byTocustomer                   promo_code[]          @relation("promo_code_created_byTocustomer")
   promo_code_promo_code_deleted_byTocustomer                   promo_code[]          @relation("promo_code_deleted_byTocustomer")
+  promo_code_usage                                             promo_code_usage[]
   vtc_drivers                                                  vtc_drivers[]
   vtc_rides                                                    vtc_rides[]
   wallet                                                       wallet?
@@ -690,8 +691,52 @@ model promo_code {
   is_deleted                               Boolean   @default(false)
   deleted_at                               DateTime? @db.Timestamp(6)
   deleted_by                               Int?
+  // 'all' | 'vtc' | 'ticketing' — scopes a code to one module. Defaults to
+  // 'all' so every pre-existing (ticketing) code keeps working unchanged.
+  // See migrate_vtc_promo.ts.
+  applies_to                               String?   @default("all") @db.VarChar(20)
   customer_promo_code_created_byTocustomer customer? @relation("promo_code_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customer_promo_code_deleted_byTocustomer customer? @relation("promo_code_deleted_byTocustomer", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  promo_code_usage                         promo_code_usage[]
+}
+
+/// Per-customer redemption record — prevents the same customer reusing a
+/// code more than once, something `promo_code.uses_count` alone (a global
+/// counter) can't express. See migrate_vtc_promo.ts and PromoService.
+model promo_code_usage {
+  id            Int         @id @default(autoincrement())
+  promo_code_id Int
+  customer_id   Int
+  vtc_ride_id   Int?
+  used_at       DateTime?   @default(now()) @db.Timestamp(6)
+  promo_code    promo_code  @relation(fields: [promo_code_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer      customer    @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([promo_code_id, customer_id], map: "idx_promo_code_usage_unique")
+}
+
+/// One row per completed VTC ride — Adigo's cut of a cash-direct-to-driver
+/// fare. `status` starts 'settled' immediately when the driver has a linked
+/// wallet (self-registered, `vtc_drivers.user_id` set) and the debit
+/// succeeds; otherwise 'pending' until an admin settles it by hand (the
+/// admin-onboarded-driver case, no wallet to auto-debit). See
+/// migrate_vtc_commission.ts and RideService.updateRideStatus.
+model vtc_commission_ledger {
+  id                Int        @id @default(autoincrement())
+  ride_id           Int        @unique
+  driver_id         Int
+  gross_fare        Decimal    @db.Decimal(10, 2)
+  commission_rate   Decimal    @default(10.00) @db.Decimal(5, 2)
+  commission_amount Decimal    @db.Decimal(10, 2)
+  status            String     @default("pending") @db.VarChar(20)
+  settled_at        DateTime?  @db.Timestamp(6)
+  settled_by        Int?
+  created_at        DateTime?  @default(now()) @db.Timestamp(6)
+  vtc_rides         vtc_rides  @relation(fields: [ride_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_drivers       vtc_drivers @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([driver_id], map: "idx_vtc_commission_ledger_driver")
+  @@index([status], map: "idx_vtc_commission_ledger_status")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -894,8 +939,19 @@ model vtc_drivers {
   registration_document String?
   vehicle_photos        String[]
   seats                 Int?        @default(4)
+  // Vetting state, distinct from `status` (which is operational — online/
+  // offline/busy/suspended). pending/approved/rejected — see
+  // migrate_vtc_driver_verification.ts's doc comment for why this is a
+  // separate column and why the migration's backfill is safe.
+  verification_status   String?     @db.VarChar(20)
+  verification_notes    String?
+  verified_at           DateTime?   @db.Timestamp(6)
+  // Visibility-only counter (no automatic suspension threshold) — see
+  // migrate_vtc_driver_cancellations.ts.
+  cancellations_count   Int?        @default(0)
   customer              customer?   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vtc_rides             vtc_rides[]
+  vtc_commission_ledger vtc_commission_ledger[]
 
   @@index([current_latitude, current_longitude], map: "idx_vtc_drivers_location")
   @@index([status], map: "idx_vtc_drivers_status")
@@ -949,9 +1005,17 @@ model vtc_rides {
   created_at          DateTime?           @default(now()) @db.Timestamp(6)
   updated_at          DateTime?           @default(now()) @db.Timestamp(6)
   idempotency_key     String?             @db.VarChar(64)
+  // When the ride actually transitioned to 'accepted' — used to compute the
+  // late-cancellation grace period (2 min) and, when scheduled, distinct
+  // from `created_at`. See migrate_vtc_cancellation_fee.ts.
+  accepted_at         DateTime?           @db.Timestamp(6)
+  cancellation_fee    Decimal?            @db.Decimal(10, 2)
+  // 'not_applicable' | 'charged' | 'unpaid' — see RideService.cancelRideWithRefund.
+  cancellation_fee_status String?         @db.VarChar(20)
   vtc_ride_tracking   vtc_ride_tracking[]
   customer            customer            @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vtc_drivers         vtc_drivers?        @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_commission_ledger vtc_commission_ledger?
 
   @@unique([customer_id, idempotency_key], map: "idx_vtc_rides_idempotency_key", where: raw("(idempotency_key IS NOT NULL)"))
   @@index([customer_id], map: "idx_vtc_rides_customer")

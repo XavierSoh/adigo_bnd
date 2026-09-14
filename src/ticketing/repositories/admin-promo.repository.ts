@@ -18,6 +18,9 @@ export class AdminPromoRepository {
         code: string; discount_type: string; discount_value: number;
         max_uses?: number; valid_from?: Date; valid_until?: Date;
         min_purchase_amount?: number; created_by?: number;
+        // 'all' | 'vtc' | 'ticketing' — scopes a code to one module, defaults
+        // to 'all' at the DB level (migrate_vtc_promo.ts). See PromoService.
+        applies_to?: string;
     }) {
         return prismaDb.promo_code.create({
             data: {
@@ -29,13 +32,15 @@ export class AdminPromoRepository {
                 valid_until: data.valid_until ?? null,
                 min_purchase_amount: data.min_purchase_amount ?? 0,
                 created_by: data.created_by,
+                applies_to: data.applies_to ?? 'all',
             } as Prisma.promo_codeUncheckedCreateInput,
         });
     }
 
-    static async findAll(status?: string, includeDeleted = false) {
+    static async findAll(status?: string, includeDeleted = false, appliesTo?: string) {
         const where: Prisma.promo_codeWhereInput = {};
         if (!includeDeleted) where.is_deleted = false;
+        if (appliesTo) where.applies_to = appliesTo;
 
         if (status === 'active') {
             where.is_active = true;
@@ -56,6 +61,7 @@ export class AdminPromoRepository {
     static async update(id: number, data: {
         discount_type?: string; discount_value?: number; max_uses?: number;
         valid_from?: Date; valid_until?: Date; min_purchase_amount?: number; is_active?: boolean;
+        applies_to?: string;
     }) {
         const updateData: Prisma.promo_codeUpdateInput = { updated_at: new Date() };
         if (data.discount_type != null) updateData.discount_type = data.discount_type;
@@ -65,6 +71,7 @@ export class AdminPromoRepository {
         if (data.valid_until != null) updateData.valid_until = data.valid_until;
         if (data.min_purchase_amount != null) updateData.min_purchase_amount = data.min_purchase_amount;
         if (data.is_active != null) updateData.is_active = data.is_active;
+        if (data.applies_to != null) updateData.applies_to = data.applies_to;
 
         return prismaDb.promo_code.update({ where: { id }, data: updateData });
     }

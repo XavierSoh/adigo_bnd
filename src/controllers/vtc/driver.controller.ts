@@ -3,9 +3,12 @@
  * HTTP handlers for driver endpoints
  */
 
+import fs from 'fs';
+import path from 'path';
 import { Request, Response } from 'express';
-import driverService from '../../services/vtc/driver.service';
-import { CreateDriverDto, UpdateDriverDto, UpdateDriverLocationDto } from '../../models/vtc/driver.model';
+import driverService, { DriverNotVerifiedError } from '../../services/vtc/driver.service';
+import { VtcNotificationService } from '../../services/vtc/vtcNotification.service';
+import { CreateDriverDto, UpdateDriverDto, UpdateDriverLocationDto, VerifyDriverDto } from '../../models/vtc/driver.model';
 
 type UploadedFiles = { [fieldname: string]: Express.Multer.File[] } | undefined;
 
@@ -52,6 +55,10 @@ export class DriverController {
         photo: docFields.photo ?? req.body.photo,
         vehicleYear: req.body.vehicleYear ? parseInt(req.body.vehicleYear) : undefined,
         userId: req.body.userId ? parseInt(req.body.userId) : undefined,
+        // A staff member manually entering this record already is the
+        // vetting step — unlike self-registration, which defaults to
+        // 'pending' (see DriverService.createDriver).
+        verificationStatus: 'approved',
       };
 
       if (!data.firstName || !data.lastName || !data.phone || !data.licenseNumber || !data.licensePlate || !data.vehicleType) {
@@ -140,6 +147,55 @@ export class DriverController {
         success: false,
         message: error.message
       });
+    }
+  }
+
+  /**
+   * GET /v1/api/vtc/drivers/pending
+   * Admin's driver-verification queue — self-registered drivers waiting on
+   * a document review before they can go online. Registered before
+   * GET /drivers/:id in vtc.router.ts so "pending" isn't parsed as an id.
+   */
+  async getPendingDrivers(req: Request, res: Response): Promise<Response> {
+    try {
+      const drivers = await driverService.getPendingDrivers();
+      return res.json({ success: true, data: drivers });
+    } catch (error: any) {
+      console.error('Error listing pending drivers:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /v1/api/vtc/drivers/:id/verify
+   * Admin approves or rejects a driver's submitted documents. This is the
+   * one gate keeping a self-registered driver from ever going 'online' —
+   * see DriverService.updateDriverStatus.
+   */
+  async verifyDriver(req: Request, res: Response): Promise<Response> {
+    try {
+      const driverId = parseInt((req.params as { id: string }).id);
+      const { approved, notes } = req.body as VerifyDriverDto;
+      if (typeof approved !== 'boolean') {
+        return res.status(400).json({ success: false, message: 'approved (boolean) est requis' });
+      }
+      if (!approved && !notes) {
+        return res.status(400).json({ success: false, message: 'Un motif est requis pour rejeter un chauffeur' });
+      }
+
+      const driver = await driverService.setVerificationStatus(driverId, approved, notes);
+      if (!driver) {
+        return res.status(404).json({ success: false, message: 'Driver not found' });
+      }
+
+      VtcNotificationService.sendDriverVerified(driverId, approved, notes).catch((err) =>
+        console.error('[VtcNotification] sendDriverVerified failed:', err)
+      );
+
+      return res.json({ success: true, data: driver });
+    } catch (error: any) {
+      console.error('Error verifying driver:', error);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 
@@ -234,6 +290,43 @@ export class DriverController {
   }
 
   /**
+   * GET /v1/api/vtc/drivers/:id/registration-document
+   * Streams the vehicle registration document ("carte grise") — the one
+   * driver document that can carry real personal identifying information
+   * (owner name/address), unlike the driver's face photo or car photos
+   * which are meant to be customer-visible. Stored under
+   * uploads-private/ (see vtc.router.ts's driverDocumentsUpload), a
+   * directory app.ts's static mount can never reach — this endpoint is the
+   * *only* way to it, gated by the same staff-or-owning-driver check every
+   * other single-driver mutation already uses. Flagged live 2026-09-13: the
+   * old plain static URL had zero authentication, reachable by anyone who
+   * ever saw it, forever.
+   */
+  async getRegistrationDocument(req: Request, res: Response): Promise<Response | void> {
+    try {
+      const driverId = parseInt((req.params as { id: string }).id);
+      if (!(await this.isAuthorizedForDriver(req, driverId))) {
+        return res.status(403).json({ success: false, message: "Vous n'avez pas accès à ce document" });
+      }
+
+      const driver = await driverService.getDriverById(driverId);
+      const relativePath = (driver as any)?.registration_document as string | undefined;
+      if (!driver || !relativePath) {
+        return res.status(404).json({ success: false, message: 'Aucun document enregistré' });
+      }
+
+      const absolutePath = path.join(process.cwd(), relativePath);
+      if (!fs.existsSync(absolutePath)) {
+        return res.status(404).json({ success: false, message: 'Fichier introuvable' });
+      }
+      return res.sendFile(absolutePath);
+    } catch (error: any) {
+      console.error('Error streaming driver registration document:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * GET /v1/api/vtc/drivers/me
    * Resolve the authenticated account's own driver profile — a "driver" is
    * a customer account (adigo_mobile login) with a vtc_drivers row pointing
@@ -316,6 +409,12 @@ export class DriverController {
       const updated = await driverService.updateDriverStatus(driver.id, req.body.status);
       return res.json({ success: true, data: updated });
     } catch (error: any) {
+      if (error instanceof DriverNotVerifiedError) {
+        return res.status(403).json({
+          success: false,
+          message: "Votre profil chauffeur est en attente de vérification par Adigo. Vous ne pouvez pas encore passer en ligne.",
+        });
+      }
       console.error('Error updating own driver status:', error);
       return res.status(500).json({ success: false, message: error.message });
     }
@@ -399,6 +498,12 @@ export class DriverController {
         data: driver
       });
     } catch (error: any) {
+      if (error instanceof DriverNotVerifiedError) {
+        return res.status(403).json({
+          success: false,
+          message: "Ce chauffeur est en attente de vérification et ne peut pas encore passer en ligne.",
+        });
+      }
       console.error('Error updating driver status:', error);
       return res.status(500).json({
         success: false,

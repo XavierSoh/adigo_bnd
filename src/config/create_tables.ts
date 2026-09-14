@@ -1197,10 +1197,10 @@ WHERE b.is_deleted = FALSE;
             surge_multiplier DECIMAL(3,2) DEFAULT 1.0,
             total_fare DECIMAL(10,2) NOT NULL,
             status VARCHAR(20) DEFAULT 'requested' CHECK (
-                status IN ('requested', 'accepted', 'arrived', 'started', 'completed', 'cancelled')
+                status IN ('scheduled', 'requested', 'offered', 'accepted', 'arrived', 'started', 'completed', 'cancelled')
             ),
             cancellation_reason TEXT,
-            cancelled_by VARCHAR(20) CHECK (cancelled_by IN ('customer', 'driver', 'system')),
+            cancelled_by VARCHAR(20) CHECK (cancelled_by IN ('customer', 'driver', 'system', 'admin')),
             customer_rating INTEGER CHECK (customer_rating BETWEEN 1 AND 5),
             driver_rating INTEGER CHECK (driver_rating BETWEEN 1 AND 5),
             customer_feedback TEXT,

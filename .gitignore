@@ -1,6 +1,7 @@
 node_modules/
 .env
 uploads/
+uploads-private/
 *.log
 firebase-service-account.json
 firebase-service-account.json.json

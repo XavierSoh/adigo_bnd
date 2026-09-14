@@ -19,6 +19,7 @@ import {
 } from '../../models/vtc/ride.model';
 import { WalletRepository } from '../../repository/wallet.repository';
 import { SocketService } from '../socket.service';
+import { VtcNotificationService } from './vtcNotification.service';
 
 const rideWithJoins = {
   vtc_drivers: { select: { first_name: true, last_name: true, phone: true } },
@@ -62,6 +63,42 @@ export class RideService {
    */
   private readonly OFFER_EXPIRY_SECONDS = 25;
 
+  /**
+   * How far ahead of a 'scheduled' ride's `pickup_time` the normal
+   * driver-search pipeline kicks in (status -> 'requested') — see
+   * promoteDueScheduledRides, swept by the same per-minute cron as the two
+   * expiry sweeps above (VtcRideExpiryService).
+   */
+  private readonly SCHEDULED_RIDE_LEAD_MINUTES = 15;
+
+  /**
+   * Late-cancellation fee policy (confirmed with the user, "manquements
+   * vs. Uber/Bolt/inDrive" audit 2026-09-13/14): free within 2 minutes of
+   * driver acceptance, flat 500 FCFA after — see cancelRideWithRefund.
+   */
+  private readonly LATE_CANCELLATION_GRACE_MINUTES = 2;
+  private readonly LATE_CANCELLATION_FEE = 500; // FCFA
+
+  /**
+   * Real dynamic pricing — "manquements pour la production" audit,
+   * 2026-09-13/14: `surgeMultiplier` used to be hardcoded to 1.0 with a
+   * "(simplified)" comment. No geographic zone concept exists yet in the
+   * schema (drivers/rides have no city/zone column), so v1 is intentionally
+   * global rather than inventing a zone table for this plan: the ratio of
+   * *pending demand* (requests still looking for a driver, last 10 minutes)
+   * to *available supply* (drivers currently 'online'), in tiers. Computed
+   * fresh on every estimate and then FROZEN onto the ride row at creation
+   * time (`vtc_rides.surge_multiplier`, unchanged behavior) — an already
+   *-booked ride's price never moves retroactively as the ratio changes.
+   */
+  private readonly SURGE_LOOKBACK_MINUTES = 10;
+  private readonly SURGE_TIERS: ReadonlyArray<{ maxRatio: number; multiplier: number }> = [
+    { maxRatio: 1, multiplier: 1.0 },
+    { maxRatio: 2, multiplier: 1.2 },
+    { maxRatio: 4, multiplier: 1.5 },
+    { maxRatio: Infinity, multiplier: 2.0 },
+  ];
+
   private readonly BASE_FARE_ECONOMY = 500; // FCFA
   private readonly BASE_FARE_COMFORT = 800;
   private readonly BASE_FARE_PREMIUM = 1500;
@@ -92,6 +129,31 @@ export class RideService {
   }
 
   /**
+   * The current global surge state — GET /vtc/surge/current (admin/customer
+   * transparency, mirrors what a rider sees pre-booking) and estimateRide
+   * below share this single computation so they can never disagree.
+   */
+  async getSurgeStatus(): Promise<{ multiplier: number; pendingRequests: number; onlineDrivers: number }> {
+    const cutoff = new Date(Date.now() - this.SURGE_LOOKBACK_MINUTES * 60 * 1000);
+    const [pendingRequests, onlineDrivers] = await Promise.all([
+      prismaDb.vtc_rides.count({
+        where: { status: { in: ['requested', 'offered'] }, created_at: { gte: cutoff } },
+      }),
+      prismaDb.vtc_drivers.count({ where: { status: 'online' } }),
+    ]);
+
+    // No supply at all: only surge if there's also real unmet demand right
+    // now (an empty platform — no drivers, no requests — is ×1.0, not
+    // "infinite surge").
+    const ratio = onlineDrivers > 0
+      ? pendingRequests / onlineDrivers
+      : (pendingRequests > 0 ? Infinity : 0);
+
+    const tier = this.SURGE_TIERS.find((t) => ratio <= t.maxRatio) ?? this.SURGE_TIERS[this.SURGE_TIERS.length - 1];
+    return { multiplier: tier.multiplier, pendingRequests, onlineDrivers };
+  }
+
+  /**
    * Estimate ride cost and duration
    */
   async estimateRide(
@@ -113,8 +175,7 @@ export class RideService {
     const distanceFare = distance * this.FARE_PER_KM;
     const timeFare = duration * this.FARE_PER_MINUTE;
 
-    // Check surge pricing (simplified)
-    const surgeMultiplier = 1.0;
+    const { multiplier: surgeMultiplier } = await this.getSurgeStatus();
 
     const totalFare = Math.round(
       (baseFare + distanceFare + timeFare) * surgeMultiplier
@@ -183,12 +244,18 @@ export class RideService {
           distance_fare: estimate.distanceFare,
           time_fare: estimate.timeFare,
           surge_multiplier: estimate.surgeMultiplier,
-          total_fare: estimate.totalFare,
+          // Codes promo (see PromoService) — the discount is subtracted
+          // here so `total_fare` is the actual amount owed, cash included;
+          // the fare *breakdown* fields above stay the pre-discount values
+          // so the customer's receipt can still show what was actually
+          // discounted (base+distance+time - total = the discount applied).
+          total_fare: Math.max(0, estimate.totalFare - (data.promoDiscountAmount ?? 0)),
           estimated_distance: estimate.estimatedDistance,
           estimated_duration: estimate.estimatedDuration,
           payment_method: data.paymentMethod,
           idempotency_key: data.idempotencyKey ?? null,
-          status: 'requested',
+          status: data.scheduledFor ? 'scheduled' : 'requested',
+          pickup_time: data.scheduledFor ? new Date(data.scheduledFor) : null,
         } as Prisma.vtc_ridesUncheckedCreateInput,
       });
 
@@ -358,7 +425,7 @@ export class RideService {
       return await prismaDb.$transaction(async (tx) => {
         const updateResult = await tx.vtc_rides.updateMany({
           where: { id: rideId, status: 'requested' },
-          data: { driver_id: driverId, status: 'accepted' },
+          data: { driver_id: driverId, status: 'accepted', accepted_at: new Date() },
         });
         if (updateResult.count === 0) return null;
 
@@ -441,7 +508,7 @@ export class RideService {
       const rideUpdate = await tx.vtc_rides.updateMany({
         where: { id: rideId, driver_id: driverId, status: 'offered' },
         data: accept
-          ? { status: 'accepted' }
+          ? { status: 'accepted', accepted_at: new Date() }
           : { status: 'requested', driver_id: null },
       });
       if (rideUpdate.count === 0) return null;
@@ -542,7 +609,16 @@ export class RideService {
 
       const ride = await tx.vtc_rides.findUnique({ where: { id: rideId } });
       if (ride?.driver_id) {
-        await tx.vtc_drivers.update({ where: { id: ride.driver_id }, data: { status: 'online' } });
+        await tx.vtc_drivers.update({
+          where: { id: ride.driver_id },
+          data: {
+            status: 'online',
+            // Visibility-only counter (no automatic suspension threshold) —
+            // see migrate_vtc_driver_cancellations.ts and
+            // driver_detail_screen.dart (adigo2).
+            ...(data.cancelledBy === 'driver' ? { cancellations_count: { increment: 1 } } : {}),
+          },
+        });
       }
       return ride as unknown as VtcRide;
     });
@@ -574,6 +650,36 @@ export class RideService {
       }
     }
 
+    // Late-cancellation fee: only the customer can incur it, only once the
+    // ride was actually accepted by a driver (`accepted_at` set — a ride
+    // cancelled while still 'requested'/'offered' never had a driver
+    // committed to it), and only past the grace period. Never applied to a
+    // driver- or system-initiated cancellation (drivers cancelling their
+    // own accepted ride are tracked separately via cancellations_count
+    // above, not charged; the auto-expiry sweep is not the customer's
+    // fault either). Left untouched (NULL — "not applicable") in every
+    // other case rather than writing an explicit sentinel value.
+    if (data.cancelledBy === 'customer' && ride.accepted_at) {
+      const elapsedMinutes = (Date.now() - new Date(ride.accepted_at).getTime()) / 60000;
+      if (elapsedMinutes > this.LATE_CANCELLATION_GRACE_MINUTES) {
+        const fee = this.LATE_CANCELLATION_FEE;
+        const feeResult = await WalletRepository.recordPayment(
+          ride.customer_id,
+          fee,
+          `Frais d'annulation tardive course VTC #${ride.id}`
+        );
+        // Never blocks/fails the cancellation either way — an insufficient
+        // balance just leaves the fee 'unpaid' for admin to chase up.
+        const feeStatus = feeResult.status ? 'charged' : 'unpaid';
+        await prismaDb.vtc_rides.update({
+          where: { id: ride.id },
+          data: { cancellation_fee: fee, cancellation_fee_status: feeStatus },
+        });
+        ride.cancellation_fee = fee;
+        ride.cancellation_fee_status = feeStatus;
+      }
+    }
+
     return ride;
   }
 
@@ -601,6 +707,40 @@ export class RideService {
       if (ride) cancelled.push(ride);
     }
     return cancelled;
+  }
+
+  /**
+   * Courses programmées — promotes every 'scheduled' ride whose
+   * `pickup_time` is now within SCHEDULED_RIDE_LEAD_MINUTES to 'requested',
+   * handing it to the exact same unassigned-request pipeline a normal
+   * "book now" ride already goes through (admin-assign queue / nearby-list
+   * offer — nothing else changes). Swept every minute by
+   * VtcRideExpiryService, same cadence as the two expiry sweeps above.
+   */
+  async promoteDueScheduledRides(): Promise<VtcRide[]> {
+    const horizon = new Date(Date.now() + this.SCHEDULED_RIDE_LEAD_MINUTES * 60 * 1000);
+    const due = await prismaDb.vtc_rides.findMany({
+      where: { status: 'scheduled', pickup_time: { lte: horizon } },
+      select: { id: true },
+    });
+
+    const promoted: VtcRide[] = [];
+    for (const { id } of due) {
+      const updateResult = await prismaDb.vtc_rides.updateMany({
+        where: { id, status: 'scheduled' },
+        data: { status: 'requested' },
+      });
+      if (updateResult.count === 0) continue; // raced with a cancellation
+
+      const ride = await prismaDb.vtc_rides.findUnique({ where: { id } });
+      if (!ride) continue;
+      SocketService.broadcastNewRideRequested(ride);
+      VtcNotificationService.sendScheduledRideUpcoming(id).catch((err) =>
+        console.error('[VtcNotification] sendScheduledRideUpcoming failed:', err)
+      );
+      promoted.push(ride as unknown as VtcRide);
+    }
+    return promoted;
   }
 
   /**
