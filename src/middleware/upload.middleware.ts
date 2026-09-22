@@ -3,7 +3,10 @@ import path from 'path';
 import fs from 'fs';
 
 // Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, '../../uploads/profile-pictures');
+// process.cwd(), not __dirname: __dirname sits one level deeper in prod
+// (dist/src/middleware) than in dev (ts-node, src/middleware), and must
+// match app.ts's static-serving path, which is also process.cwd()-based.
+const uploadsDir = path.join(process.cwd(), 'uploads/profile-pictures');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }

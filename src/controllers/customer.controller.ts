@@ -871,7 +871,8 @@ export class CustomerController {
             });
 
             if (result.status && oldProfilePicture && oldProfilePicture !== profilePictureUrl) {
-                const oldFilePath = path.join(__dirname, '../../uploads/profile-pictures', path.basename(oldProfilePicture));
+                // process.cwd(), not __dirname - see upload.middleware.ts for why.
+                const oldFilePath = path.join(process.cwd(), 'uploads/profile-pictures', path.basename(oldProfilePicture));
                 fs.unlink(oldFilePath, (err) => {
                     // ENOENT (already gone) is fine to ignore — the new
                     // picture is already saved either way, this must never

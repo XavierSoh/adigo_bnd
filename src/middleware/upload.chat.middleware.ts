@@ -3,8 +3,9 @@ import path from 'path';
 import fs from 'fs';
 
 // Ensure chat uploads directories exist
-const chatImagesDir = path.join(__dirname, '../../uploads/chat/images');
-const chatFilesDir = path.join(__dirname, '../../uploads/chat/files');
+// process.cwd(), not __dirname - see upload.middleware.ts for why.
+const chatImagesDir = path.join(process.cwd(), 'uploads/chat/images');
+const chatFilesDir = path.join(process.cwd(), 'uploads/chat/files');
 
 if (!fs.existsSync(chatImagesDir)) {
     fs.mkdirSync(chatImagesDir, { recursive: true });

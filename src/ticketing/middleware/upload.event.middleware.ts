@@ -9,10 +9,11 @@ import path from 'path';
 import fs from 'fs';
 
 // Create upload directories
-const postersDir = path.join(__dirname, '../../../uploads/events/posters');
-const bannersDir = path.join(__dirname, '../../../uploads/events/banners');
-const galleriesDir = path.join(__dirname, '../../../uploads/events/galleries');
-const organizersDir = path.join(__dirname, '../../../uploads/organizers');
+// process.cwd(), not __dirname - see upload.middleware.ts for why.
+const postersDir = path.join(process.cwd(), 'uploads/events/posters');
+const bannersDir = path.join(process.cwd(), 'uploads/events/banners');
+const galleriesDir = path.join(process.cwd(), 'uploads/events/galleries');
+const organizersDir = path.join(process.cwd(), 'uploads/organizers');
 
 [postersDir, bannersDir, galleriesDir, organizersDir].forEach(dir => {
     if (!fs.existsSync(dir)) {

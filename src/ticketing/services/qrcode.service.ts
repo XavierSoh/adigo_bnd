@@ -20,7 +20,8 @@ export interface QRCodeData {
 
 export class QRCodeService {
 
-    private static readonly UPLOAD_DIR = path.join(__dirname, '../../uploads/qrcodes');
+    // process.cwd(), not __dirname - see upload.middleware.ts for why.
+    private static readonly UPLOAD_DIR = path.join(process.cwd(), 'uploads/qrcodes');
 
     /**
      * Initialize QR code upload directory
@@ -146,7 +147,7 @@ export class QRCodeService {
      */
     static deleteQRCodeImage(filepath: string): boolean {
         try {
-            const fullPath = path.join(__dirname, '../../', filepath);
+            const fullPath = path.join(process.cwd(), filepath);
             if (fs.existsSync(fullPath)) {
                 fs.unlinkSync(fullPath);
                 console.log(`🗑️  Deleted QR code: ${filepath}`);
