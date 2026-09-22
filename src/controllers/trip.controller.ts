@@ -280,7 +280,7 @@ export class TripController {
 
     static async searchByRoute(req: Request, res: Response): Promise<void> {
         try {
-            const { departure_city, arrival_city, departure_date } = req.query;
+            const { departure_city, arrival_city, departure_date, passengers } = req.query;
 
             if (!departure_city || !arrival_city) {
                 res.status(400).json({
@@ -304,10 +304,17 @@ export class TripController {
                 }
             }
 
+            // Only meaningful alongside a specific departureDate - seat
+            // capacity is a per-day generated_trip concept, not something a
+            // recurring route template has on its own (see
+            // TripRepository.findByRoute's doc comment).
+            const minSeats = passengers != null ? parseInt(passengers as string, 10) : undefined;
+
             const result = await TripRepository.findByRoute(
                 departure_city as string,
                 arrival_city as string,
-                departureDate
+                departureDate,
+                Number.isFinite(minSeats) ? minSeats : undefined
             );
             res.status(result.code).json(result);
         } catch (error) {

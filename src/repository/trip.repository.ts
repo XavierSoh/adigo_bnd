@@ -17,6 +17,9 @@ import { Prisma } from "@prisma/client";
 import prismaDb from "../config/prismaClient";
 import { TripModel } from "../models/trip.model";
 import ResponseModel from "../models/response.model";
+import { TripGenerationService } from "../services/tripGeneration.service";
+
+const tripGenerationService = new TripGenerationService();
 
 // `t.*` plus a flattened, JSON-parsed `recurrence_pattern` (or nothing, if
 // there was none) — same shape reused by findById/findAllByAgency/findByRoute.
@@ -274,38 +277,129 @@ export class TripRepository {
         }
     }
 
-    static async findByRoute(departureCity: string, arrivalCity: string, departureDate?: Date): Promise<ResponseModel> {
+    static async findByRoute(
+        departureCity: string,
+        arrivalCity: string,
+        departureDate?: Date,
+        minSeats?: number
+    ): Promise<ResponseModel> {
         try {
+            // Two real, separate bugs here, both flagged live 2026-09-22
+            // ("j'ai créé des voyages mais... rien ne s'affiche") against a
+            // brand-new route whose service starts tomorrow:
+            //
+            // 1. `valid_from: { lte: new Date() }` compared a trip's start
+            //    of service against *right now*, not against whatever date
+            //    is actually being searched for - a trip starting service
+            //    tomorrow could never be found today even when explicitly
+            //    searching for tomorrow's date. Fixed by comparing against
+            //    `departureDate` when one is given.
+            // 2. With no date given at all, the old code still silently
+            //    demanded "valid right now" - per explicit product
+            //    decision, a plain route search (no date picked yet) should
+            //    surface every active route regardless of its validity
+            //    window, so the customer can see it exists before narrowing
+            //    down to a specific day. No valid_from/valid_until filter
+            //    at all in that case.
+            //
+            // The literal `departure_time` day-match this replaced was also
+            // wrong for any *recurring* trip (daily/weekly): that column
+            // only ever holds the template's own single anchor timestamp,
+            // so a search for any day other than that exact anchor date
+            // returned nothing even though the trip demonstrably runs that
+            // day. Recurrence is now evaluated in JS below, reusing
+            // TripGenerationService's own isValidDateForTrip - the same
+            // logic that decides which dates actually get generated - so
+            // "found by search" and "actually generated/bookable" can never
+            // disagree.
             const where: Prisma.tripWhereInput = {
                 departure_city: departureCity,
                 arrival_city: arrivalCity,
                 is_deleted: false,
                 is_active: true,
-                valid_from: { lte: new Date() },
-                OR: [{ valid_until: null }, { valid_until: { gte: new Date() } }],
+                ...(departureDate
+                    ? {
+                        valid_from: { lte: departureDate },
+                        OR: [{ valid_until: null }, { valid_until: { gte: departureDate } }],
+                    }
+                    : {}),
             };
 
-            if (departureDate) {
-                // `DATE(t.departure_time) = DATE($3)` — no DATE()-truncation
-                // operator in the model API, reconstructed as a
-                // same-calendar-day range instead of reaching for
-                // $queryRaw. `$3` was `departureDate.toISOString()`, so the
-                // original compared against departureDate's UTC calendar
-                // day — matched here via the same `toISOString().slice(0,10)`
-                // extraction, letting the timezone extension apply its
-                // usual write-side shift to the two boundary Dates exactly
-                // like every other `timestamp` filter in this migration.
-                const dateStr = departureDate.toISOString().slice(0, 10);
-                const dayStart = new Date(`${dateStr}T00:00:00.000Z`);
-                const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-                where.departure_time = { gte: dayStart, lt: dayEnd };
-            }
-
-            const rows = await prismaDb.trip.findMany({
+            let rows = await prismaDb.trip.findMany({
                 where,
                 include: { recurrence_pattern: { select: recurrencePatternSelect } },
                 orderBy: { departure_time: 'asc' },
             });
+
+            // Remaining-seats-for-that-day, keyed by trip id once computed
+            // below - a `trip` template row has no seat concept of its own
+            // (capacity lives on the bus assigned to a specific day's
+            // generated_trip instance, and occupancy varies day to day with
+            // real bookings against that instance), so this can only be
+            // known once departureDate narrows the search to one concrete
+            // day. Reported live 2026-09-22: "est-ce que la recherche tient
+            // compte du nombre de passagers restants" - it didn't at all
+            // before this.
+            const seatsByTripId = new Map<number, number>();
+
+            if (departureDate) {
+                // Same field-flattening TripGenerationService.
+                // generateTripsForPeriod itself uses before calling this
+                // exact method - isValidDateForTrip has no idea about the
+                // nested `recurrence_pattern` shape Prisma's `include`
+                // returns.
+                const flattenedRows = rows.map((row) => ({
+                    row,
+                    flattened: {
+                        ...row,
+                        recurrence_type: row.recurrence_pattern?.type ?? null,
+                        interval: row.recurrence_pattern?.interval ?? null,
+                        days_of_week: row.recurrence_pattern?.days_of_week ?? null,
+                        exceptions: row.recurrence_pattern?.exceptions ?? null,
+                    },
+                }));
+
+                const matches = flattenedRows.filter(({ flattened }) =>
+                    tripGenerationService.isValidDateForTrip(flattened, departureDate)
+                );
+
+                // Ensures the concrete day's bookable instance exists (the
+                // daily cron only materializes ~7 days ahead - see
+                // ensureInstanceExists's doc comment) so "found by search"
+                // always has a real generated_trip to check capacity
+                // against and to actually book, however far in advance the
+                // search is.
+                const instances = await Promise.all(
+                    matches.map(({ flattened }) => tripGenerationService.ensureInstanceExists(flattened, departureDate))
+                );
+
+                const instanceIds = instances.filter((i): i is NonNullable<typeof i> => i != null).map((i) => i.id);
+                const occupancy = instanceIds.length
+                    ? await prismaDb.booking.groupBy({
+                        by: ['generated_trip_id'],
+                        where: { generated_trip_id: { in: instanceIds }, status: { in: ['confirmed', 'pending', 'completed'] }, is_deleted: false },
+                        _count: { _all: true },
+                    })
+                    : [];
+                const takenByInstanceId = new Map(occupancy.map((o) => [o.generated_trip_id, o._count._all]));
+
+                matches.forEach(({ row }, i) => {
+                    const instance = instances[i];
+                    if (!instance) return;
+                    // `instance.available_seats` is a write-once snapshot of
+                    // the assigned bus's capacity at creation time (never
+                    // itself decremented - see findAllWithDetails's own
+                    // identical comment), so it doubles as "capacity" here;
+                    // real remaining seats is that minus bookings actually
+                    // taken against this specific instance.
+                    const taken = takenByInstanceId.get(instance.id) ?? 0;
+                    seatsByTripId.set(row.id, Math.max((instance.available_seats ?? 0) - taken, 0));
+                });
+
+                rows = matches
+                    .map(({ row }) => row)
+                    .filter((row) => minSeats == null || (seatsByTripId.get(row.id) ?? 0) >= minSeats);
+            }
 
             // Original had a defensive `typeof price === 'string' ?
             // parseFloat(price) : price` (a pg-promise-era quirk). Native
@@ -316,7 +410,13 @@ export class TripRepository {
             // and is NOT converted to a float here; this is a deliberate,
             // positive behavior difference (full precision vs. the
             // original's occasional float), not an oversight.
-            const trips = rows.map((row) => attachRecurrencePattern(row));
+            const trips = rows.map((row) => ({
+                ...attachRecurrencePattern(row),
+                // Only present when departureDate was given - a bare route
+                // search (no date picked yet) has no single day's capacity
+                // to report.
+                ...(seatsByTripId.has(row.id) ? { available_seats: seatsByTripId.get(row.id) } : {}),
+            }));
 
             return { status: true, message: 'Trips trouvés', body: trips, code: 200 };
         } catch (error) {
