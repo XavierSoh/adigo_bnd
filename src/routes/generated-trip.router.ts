@@ -11,6 +11,8 @@ generatedTripRouter.post("/for_period", GeneratedTripController.generateForPerio
 generatedTripRouter.get("/by-date-range", GeneratedTripController.getByDateRange);
 generatedTripRouter.get("/statistics", GeneratedTripController.getStatistics);
 generatedTripRouter.get("/available-cities", GeneratedTripController.getAvailableCities);
+// Must come before /:id, or Express would parse "batch" as an :id.
+generatedTripRouter.delete("/batch", GeneratedTripController.deleteBatch);
 
 // CRUD routes
 generatedTripRouter.post("/", GeneratedTripController.create);

@@ -200,6 +200,31 @@ export class GeneratedTripController {
         }
     }
 
+    // Delete multiple generated trips at once
+    static async deleteBatch(req: Request, res: Response): Promise<void> {
+        try {
+            const { ids } = req.body as { ids?: unknown };
+
+            if (!Array.isArray(ids) || ids.length === 0 || !ids.every(id => typeof id === 'number')) {
+                res.status(400).json({
+                    status: false,
+                    message: "ids doit être un tableau de nombres non vide",
+                    code: 400
+                });
+                return;
+            }
+
+            const result = await GeneratedTripRepository.deleteBatch(ids);
+            res.status(result.code).json(result);
+        } catch (error) {
+            res.status(500).json({
+                status: false,
+                message: "Erreur serveur",
+                code: 500
+            });
+        }
+    }
+
     // Get by date range
     static async getByDateRange(req: Request, res: Response): Promise<void> {
         try {

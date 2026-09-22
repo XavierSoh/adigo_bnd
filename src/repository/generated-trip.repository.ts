@@ -108,6 +108,41 @@ export class GeneratedTripRepository {
         }
     }
 
+    // Delete multiple generated trips at once (admin bulk cleanup). Any id
+    // with an existing booking (booking.generated_trip_id has ON DELETE NO
+    // ACTION, unlike generated_trip_seat which cascades) is skipped rather
+    // than failing the whole batch - deleteMany would otherwise abort
+    // entirely because one out of e.g. 500 selected rows still has a live
+    // booking.
+    static async deleteBatch(ids: number[]): Promise<ResponseModel> {
+        try {
+            const blocked = await prismaDb.booking.findMany({
+                where: { generated_trip_id: { in: ids } },
+                select: { generated_trip_id: true },
+                distinct: ['generated_trip_id'],
+            });
+            const blockedIds = blocked.map(b => b.generated_trip_id);
+            const deletableIds = ids.filter(id => !blockedIds.includes(id));
+
+            const result = deletableIds.length > 0
+                ? await prismaDb.generated_trip.deleteMany({ where: { id: { in: deletableIds } } })
+                : { count: 0 };
+
+            const message = blockedIds.length > 0
+                ? `${result.count} voyage(s) généré(s) supprimé(s), ${blockedIds.length} ignoré(s) (réservation(s) active(s))`
+                : `${result.count} voyage(s) généré(s) supprimé(s)`;
+
+            return {
+                status: true,
+                message,
+                body: { deletedCount: result.count, skippedIds: blockedIds },
+                code: 200,
+            };
+        } catch (error) {
+            return { status: false, message: "Erreur lors de la suppression des voyages générés", code: 500 };
+        }
+    }
+
     // Find all generated trips
     static async findAll(): Promise<ResponseModel> {
         try {
