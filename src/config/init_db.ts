@@ -16,6 +16,7 @@ import { migrateVtcCancellationFee } from "./migrate_vtc_cancellation_fee";
 import { migrateVtcPromo } from "./migrate_vtc_promo";
 import { migrateVtcCommission } from "./migrate_vtc_commission";
 import { migrateVtcScheduledStatus } from "./migrate_vtc_scheduled_status";
+import { migrateVtcDriverStatusCheck } from "./migrate_vtc_driver_status_check";
 
 export const initDb = async () =>  {
     // Créer la base de données si elle n'existe pas
@@ -42,6 +43,7 @@ export const initDb = async () =>  {
     await migrateVtcPromo();
     await migrateVtcCommission();
     await migrateVtcScheduledStatus();
+    await migrateVtcDriverStatusCheck();
 
     // Initialiser les données par défaut
     await initFirtsItems();
