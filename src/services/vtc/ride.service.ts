@@ -570,7 +570,7 @@ export class RideService {
     const ride = await prismaDb.$transaction(async (tx) => {
       const current = await tx.vtc_rides.findUnique({
         where: { id: rideId },
-        select: { status: true, driver_id: true },
+        select: { status: true, driver_id: true, payment_method: true, payment_status: true },
       });
       if (!current) return null;
 
@@ -581,11 +581,24 @@ export class RideService {
         );
       }
 
+      // Cash is pay-on-arrival with no separate confirmation step anywhere
+      // in the app (unlike wallet/Orange Money, settled by their own
+      // handlers - see markPaymentCompleted/wallet.settlement.ts) - nothing
+      // ever flipped a cash ride's payment_status off 'pending', even after
+      // a real completed, presumably-paid trip. Reported live 2026-09-22:
+      // "ça reste pending alors qu'il a payé". Completing the ride is the
+      // only real-world signal cash actually changed hands this app has,
+      // so it's the correct (and only sensible) point to settle it.
+      const settleCash = newStatus === 'completed' &&
+        current.payment_method === 'cash' &&
+        current.payment_status === 'pending';
+
       const ride = await tx.vtc_rides.update({
         where: { id: rideId },
         data: {
           status: newStatus,
           ...(newStatus === 'completed' ? { dropoff_time: new Date() } : {}),
+          ...(settleCash ? { payment_status: 'completed' } : {}),
         },
       });
 
