@@ -8,6 +8,7 @@
 // tier 4) and VTC_MODULE_PLAN.md.
 import { Prisma } from '@prisma/client';
 import prismaDb from '../../config/prismaClient';
+import { SocketService } from '../socket.service';
 import {
   VtcDriver,
   CreateDriverDto,
@@ -300,6 +301,7 @@ export class DriverService {
     }
     try {
       const result = await prismaDb.vtc_drivers.update({ where: { id: driverId }, data: { status } });
+      SocketService.broadcastDriverStatusChanged(driverId, status);
       return result as unknown as VtcDriver;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {

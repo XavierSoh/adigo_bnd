@@ -421,8 +421,9 @@ export class RideService {
    * to a second ride succeeded outright.
    */
   async assignDriver(rideId: number, driverId: number): Promise<VtcRide | null> {
+    let ride: VtcRide | null;
     try {
-      return await prismaDb.$transaction(async (tx) => {
+      ride = await prismaDb.$transaction(async (tx) => {
         const updateResult = await tx.vtc_rides.updateMany({
           where: { id: rideId, status: 'requested' },
           data: { driver_id: driverId, status: 'accepted', accepted_at: new Date() },
@@ -451,6 +452,11 @@ export class RideService {
       if (error instanceof DriverUnavailableError) return null;
       throw error;
     }
+    // Only after the transaction actually committed - broadcasting from
+    // inside it would announce a flip that a later step (or the
+    // transaction itself) could still roll back.
+    if (ride) SocketService.broadcastDriverStatusChanged(driverId, 'busy');
+    return ride;
   }
 
   /**
@@ -464,8 +470,9 @@ export class RideService {
    * and so declining/expiring can cleanly put them straight back 'online'.
    */
   async offerToDriver(rideId: number, driverId: number): Promise<VtcRide | null> {
+    let ride: VtcRide | null;
     try {
-      return await prismaDb.$transaction(async (tx) => {
+      ride = await prismaDb.$transaction(async (tx) => {
         // `updated_at` isn't `@updatedAt` in schema.prisma (it never bumps
         // on its own on any update anywhere in this model) — set it here
         // explicitly, since expireStaleOfferedRides' cutoff is measured
@@ -491,6 +498,8 @@ export class RideService {
       if (error instanceof DriverUnavailableError) return null;
       throw error;
     }
+    if (ride) SocketService.broadcastDriverStatusChanged(driverId, 'offered');
+    return ride;
   }
 
   /**
@@ -504,7 +513,7 @@ export class RideService {
    * returning null rather than silently touching someone else's ride.
    */
   async respondToOffer(rideId: number, driverId: number, accept: boolean): Promise<VtcRide | null> {
-    return prismaDb.$transaction(async (tx) => {
+    const ride = await prismaDb.$transaction(async (tx) => {
       const rideUpdate = await tx.vtc_rides.updateMany({
         where: { id: rideId, driver_id: driverId, status: 'offered' },
         data: accept
@@ -520,6 +529,8 @@ export class RideService {
 
       return await tx.vtc_rides.findUnique({ where: { id: rideId } }) as unknown as VtcRide;
     });
+    if (ride) SocketService.broadcastDriverStatusChanged(driverId, accept ? 'busy' : 'online');
+    return ride;
   }
 
   /**
@@ -555,7 +566,8 @@ export class RideService {
    * assignDriver.
    */
   async updateRideStatus(rideId: number, newStatus: string): Promise<VtcRide | null> {
-    return prismaDb.$transaction(async (tx) => {
+    let freedDriverId: number | null = null;
+    const ride = await prismaDb.$transaction(async (tx) => {
       const current = await tx.vtc_rides.findUnique({
         where: { id: rideId },
         select: { status: true, driver_id: true },
@@ -579,10 +591,13 @@ export class RideService {
 
       if (newStatus === 'completed' && current.driver_id) {
         await tx.vtc_drivers.update({ where: { id: current.driver_id }, data: { status: 'online' } });
+        freedDriverId = current.driver_id;
       }
 
       return ride as unknown as VtcRide;
     });
+    if (freedDriverId != null) SocketService.broadcastDriverStatusChanged(freedDriverId, 'online');
+    return ride;
   }
 
   /**
@@ -638,6 +653,7 @@ export class RideService {
     if (!ride) return ride;
 
     SocketService.broadcastRideStatusChanged(ride);
+    if (ride.driver_id) SocketService.broadcastDriverStatusChanged(ride.driver_id, 'online');
 
     if (ride.total_fare > 0 && ride.payment_status === 'completed') {
       const refundResult = await WalletRepository.recordRefund(

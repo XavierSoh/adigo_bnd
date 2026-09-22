@@ -475,6 +475,21 @@ export class SocketService {
     }
 
     /**
+     * Broadcast a driver's own status change (online/offline/busy/offered/
+     * suspended) to every admin dispatch screen — until this existed,
+     * neither the "Chauffeurs" list nor a driver's badge on the live map
+     * ever updated without a manual refresh (found live 2026-09-22 auditing
+     * the desktop VTC module for what wasn't actually real-time yet).
+     */
+    static broadcastDriverStatusChanged(driverId: number, status: string): void {
+        this.io.to('vtc_dispatch').emit('driver_status_changed', {
+            event: 'driver_status_changed',
+            data: { id: driverId, status },
+            timestamp: new Date().toISOString(),
+        });
+    }
+
+    /**
      * Broadcast dashboard update to all connected admins
      */
     static async broadcastDashboardUpdate(agencyId?: number): Promise<void> {
