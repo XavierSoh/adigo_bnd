@@ -426,8 +426,6 @@ model event_review {
   rating                                     Int
   comment                                    String?
   is_approved                                Boolean?  @default(true)
-  flagged                                    Boolean?  @default(false)
-  flagged_reason                             String?
   created_at                                 DateTime? @default(now()) @db.Timestamp(6)
   updated_at                                 DateTime? @db.Timestamp(6)
   is_flagged                                 Boolean?  @default(false)
