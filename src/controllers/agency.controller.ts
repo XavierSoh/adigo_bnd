@@ -14,6 +14,29 @@ function parseCoordinate(value: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+// Same multipart/form-data quirk as parseCoordinate above, for the one JSON
+// column this controller touches: Dio's FormData.fromMap stringifies a null
+// Dart value to the literal 4-character string "null" rather than omitting
+// the field - passed straight through to Prisma's Json? column, it stored
+// the JSON *string* "null" (not SQL NULL), which the desktop's
+// `json['custom_hours'] as Map<String, dynamic>?` then failed to cast on
+// every subsequent read. No UI actually collects custom_hours yet (only the
+// flat opening_hours text field), so undefined (omit, keep existing/null)
+// is correct for every real caller today; a real JSON-encoded string is
+// still accepted for whenever a UI does start sending one.
+function parseCustomHours(value: unknown): Record<string, unknown> | undefined {
+    if (value === undefined || value === null || value === '' || value === 'null') return undefined;
+    if (typeof value === 'object') return value as Record<string, unknown>;
+    if (typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return undefined;
+        }
+    }
+    return undefined;
+}
+
 export class AgencyController {
     static async createAgency(req: Request, res: Response) {
         // Gestion du fichier logo (à implémenter selon votre middleware de fichiers)
@@ -25,6 +48,7 @@ export class AgencyController {
             logo: logoPath,
             latitude: parseCoordinate(req.body.latitude),
             longitude: parseCoordinate(req.body.longitude),
+            custom_hours: parseCustomHours(req.body.custom_hours),
             created_by: created_by
         };
 
@@ -60,7 +84,8 @@ export class AgencyController {
             cities_served: req.body.cities_served?.split(',').map((city: string) => city.trim()),
             logo: logoPath || req.body.logo,
             latitude: parseCoordinate(req.body.latitude),
-            longitude: parseCoordinate(req.body.longitude)
+            longitude: parseCoordinate(req.body.longitude),
+            custom_hours: parseCustomHours(req.body.custom_hours)
         };
 
         const response = await AgencyRepository.update(parseInt(id), updateData);

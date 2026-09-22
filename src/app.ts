@@ -41,7 +41,20 @@ const app = express();
 app.use(express.json({limit:"100mb"}));
 app.use(cors());
 app.use(helmet());
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Was path.join(__dirname, '../uploads') - correct in dev (ts-node keeps
+// __dirname at src/, one level above uploads/), but wrong in production:
+// the compiled app.js lives at dist/src/app.js, so __dirname resolves one
+// directory too deep there, silently serving from a dist/uploads/ that
+// never gets created (multer's own destination, 'uploads/vtc-drivers/'
+// etc., is resolved relative to process.cwd() - always the project root
+// either way - so uploads were always being *written* to the right place,
+// just never *found* again in prod). Every uploaded file (driver photos,
+// vehicle photos, agency logos) 404'd in production while working fine
+// locally. process.cwd() matches multer's own resolution exactly,
+// regardless of dev (ts-node) vs compiled (dist/) execution. Confirmed
+// live 2026-09-22: a real vehicle photo existed on disk at
+// /var/www/adigo/uploads/vtc-drivers/... but 404'd over HTTP.
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Language detection middleware (doit être après express.json())
 app.use(languageMiddleware);
