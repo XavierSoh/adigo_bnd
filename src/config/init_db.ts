@@ -17,6 +17,7 @@ import { migrateVtcPromo } from "./migrate_vtc_promo";
 import { migrateVtcCommission } from "./migrate_vtc_commission";
 import { migrateVtcScheduledStatus } from "./migrate_vtc_scheduled_status";
 import { migrateVtcDriverStatusCheck } from "./migrate_vtc_driver_status_check";
+import { migrateAgencyCoordinates } from "./migrate_agency_coordinates";
 
 export const initDb = async () =>  {
     // Créer la base de données si elle n'existe pas
@@ -44,6 +45,7 @@ export const initDb = async () =>  {
     await migrateVtcCommission();
     await migrateVtcScheduledStatus();
     await migrateVtcDriverStatusCheck();
+    await migrateAgencyCoordinates();
 
     // Initialiser les données par défaut
     await initFirtsItems();
