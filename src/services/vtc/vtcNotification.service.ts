@@ -27,11 +27,29 @@ interface NotifiableCustomer {
     preferred_language: string | null;
 }
 
-async function pushIfEnabled(customer: NotifiableCustomer | null | undefined, title: string, body: string, data?: Record<string, string>): Promise<void> {
+interface PushOptions {
+    /** Defaults to 'vtc_channel' (every VTC push rings distinctly from chat — point 3a). */
+    androidChannelId?: string;
+    dataOnly?: boolean;
+}
+
+async function pushIfEnabled(
+    customer: NotifiableCustomer | null | undefined,
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+    options?: PushOptions,
+): Promise<void> {
     if (!customer) return;
     if (!customer.notification_enabled) return;
     if (!customer.fcm_token || !NotificationService.isValidToken(customer.fcm_token)) return;
-    await NotificationService.sendToDevice(customer.fcm_token, { title, body, data });
+    await NotificationService.sendToDevice(customer.fcm_token, {
+        title,
+        body,
+        data,
+        androidChannelId: options?.androidChannelId || 'vtc_channel',
+        dataOnly: options?.dataOnly,
+    });
 }
 
 const notifiableCustomerSelect = {
@@ -68,7 +86,20 @@ async function loadRideWithParties(rideId: number | string) {
 
 export class VtcNotificationService {
 
-    /** New unassigned/offered ride -> push the offered driver. */
+    /**
+     * New unassigned/offered ride -> push the offered driver.
+     *
+     * Deliberately `dataOnly` + its own 'vtc_driver_offer_channel' (point 3,
+     * UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md): a driver polls for offers only
+     * while the driver screen itself is mounted (vtcDriverViewModelProvider
+     * is `autoDispose`), so this push is the only channel that can reach
+     * them once they've navigated elsewhere or backgrounded/killed the app.
+     * A plain notification-message would let the OS auto-display a silent
+     * tray line the driver can easily miss mid-drive; data-only hands full
+     * control to the app's own handler, which shows a full-screen, ringing
+     * accept/decline UI instead (see firebase_messaging_service.dart,
+     * adigo_mobile).
+     */
     static async sendRideOffered(rideId: number | string): Promise<void> {
         const ride = await loadRideWithParties(rideId);
         if (!ride?.vtc_drivers?.customer) return;
@@ -77,7 +108,13 @@ export class VtcNotificationService {
             ride.vtc_drivers.customer,
             I18n.t('push_vtc_ride_offered_title', lang),
             I18n.t('push_vtc_ride_offered_body', lang, { pickup: ride.pickup_address }),
-            { type: 'vtc_ride_offered', ride_id: String(rideId) }
+            {
+                type: 'vtc_ride_offered',
+                ride_id: String(rideId),
+                pickup_address: ride.pickup_address || '',
+                dropoff_address: ride.dropoff_address || '',
+            },
+            { androidChannelId: 'vtc_driver_offer_channel', dataOnly: true },
         );
     }
 

@@ -47,20 +47,17 @@ model agency {
   phone                          String    @db.VarChar(20)
   email                          String?   @db.VarChar(100)
   logo                           String?   @db.VarChar(255)
-  // GPS coordinates for the agency's main location — lets the mobile app
-  // drop a map pin, and is the starting point for a future per-station
-  // "point d'embarquement" feature (agencies with several gares in the
-  // same city need one of these each, not just one on the agency itself,
-  // but this is the first real coordinate this system has ever stored for
-  // an agency).
-  latitude                       Float?
-  longitude                      Float?
   opening_hours                  String?   @db.VarChar(50)
   custom_hours                   Json?
   is_deleted                     Boolean?  @default(false)
   deleted_at                     DateTime? @db.Timestamp(6)
   deleted_by                     Int?
   created_by                     Int?
+  latitude                       Float?
+  longitude                      Float?
+  late_cancellation_grace_hours  Int       @default(2)
+  late_cancellation_fee_percent  Int       @default(0)
+  requires_seat_selection        Boolean   @default(true)
   users_agency_created_byTousers users?    @relation("agency_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_agency_deleted_byTousers users?    @relation("agency_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   bus                            bus[]
@@ -426,6 +423,8 @@ model event_review {
   rating                                     Int
   comment                                    String?
   is_approved                                Boolean?  @default(true)
+  flagged                                    Boolean?  @default(false)
+  flagged_reason                             String?
   created_at                                 DateTime? @default(now()) @db.Timestamp(6)
   updated_at                                 DateTime? @db.Timestamp(6)
   is_flagged                                 Boolean?  @default(false)
@@ -673,28 +672,25 @@ model profile_access_rights {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model promo_code {
-  id                                       Int       @id @default(autoincrement())
-  code                                     String    @unique @db.VarChar(50)
-  discount_type                            String    @db.VarChar(20)
+  id                                       Int                @id @default(autoincrement())
+  code                                     String             @unique @db.VarChar(50)
+  discount_type                            String             @db.VarChar(20)
   discount_value                           Int
   max_uses                                 Int?
-  uses_count                               Int       @default(0)
-  min_purchase_amount                      Int?      @default(0)
-  valid_from                               DateTime? @db.Timestamp(6)
-  valid_until                              DateTime? @db.Timestamp(6)
-  is_active                                Boolean   @default(true)
+  uses_count                               Int                @default(0)
+  min_purchase_amount                      Int?               @default(0)
+  valid_from                               DateTime?          @db.Timestamp(6)
+  valid_until                              DateTime?          @db.Timestamp(6)
+  is_active                                Boolean            @default(true)
   created_by                               Int?
-  created_at                               DateTime? @default(now()) @db.Timestamp(6)
-  updated_at                               DateTime? @db.Timestamp(6)
-  is_deleted                               Boolean   @default(false)
-  deleted_at                               DateTime? @db.Timestamp(6)
+  created_at                               DateTime?          @default(now()) @db.Timestamp(6)
+  updated_at                               DateTime?          @db.Timestamp(6)
+  is_deleted                               Boolean            @default(false)
+  deleted_at                               DateTime?          @db.Timestamp(6)
   deleted_by                               Int?
-  // 'all' | 'vtc' | 'ticketing' — scopes a code to one module. Defaults to
-  // 'all' so every pre-existing (ticketing) code keeps working unchanged.
-  // See migrate_vtc_promo.ts.
-  applies_to                               String?   @default("all") @db.VarChar(20)
-  customer_promo_code_created_byTocustomer customer? @relation("promo_code_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  customer_promo_code_deleted_byTocustomer customer? @relation("promo_code_deleted_byTocustomer", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  applies_to                               String?            @default("all") @db.VarChar(20)
+  customer_promo_code_created_byTocustomer customer?          @relation("promo_code_created_byTocustomer", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer_promo_code_deleted_byTocustomer customer?          @relation("promo_code_deleted_byTocustomer", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   promo_code_usage                         promo_code_usage[]
 }
 
@@ -702,13 +698,13 @@ model promo_code {
 /// code more than once, something `promo_code.uses_count` alone (a global
 /// counter) can't express. See migrate_vtc_promo.ts and PromoService.
 model promo_code_usage {
-  id            Int         @id @default(autoincrement())
+  id            Int        @id @default(autoincrement())
   promo_code_id Int
   customer_id   Int
   vtc_ride_id   Int?
-  used_at       DateTime?   @default(now()) @db.Timestamp(6)
-  promo_code    promo_code  @relation(fields: [promo_code_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  customer      customer    @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  used_at       DateTime?  @default(now()) @db.Timestamp(6)
+  customer      customer   @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  promo_code    promo_code @relation(fields: [promo_code_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([promo_code_id, customer_id], map: "idx_promo_code_usage_unique")
 }
@@ -720,18 +716,18 @@ model promo_code_usage {
 /// admin-onboarded-driver case, no wallet to auto-debit). See
 /// migrate_vtc_commission.ts and RideService.updateRideStatus.
 model vtc_commission_ledger {
-  id                Int        @id @default(autoincrement())
-  ride_id           Int        @unique
+  id                Int         @id @default(autoincrement())
+  ride_id           Int         @unique
   driver_id         Int
-  gross_fare        Decimal    @db.Decimal(10, 2)
-  commission_rate   Decimal    @default(10.00) @db.Decimal(5, 2)
-  commission_amount Decimal    @db.Decimal(10, 2)
-  status            String     @default("pending") @db.VarChar(20)
-  settled_at        DateTime?  @db.Timestamp(6)
+  gross_fare        Decimal     @db.Decimal(10, 2)
+  commission_rate   Decimal     @default(10.00) @db.Decimal(5, 2)
+  commission_amount Decimal     @db.Decimal(10, 2)
+  status            String      @default("pending") @db.VarChar(20)
+  settled_at        DateTime?   @db.Timestamp(6)
   settled_by        Int?
-  created_at        DateTime?  @default(now()) @db.Timestamp(6)
-  vtc_rides         vtc_rides  @relation(fields: [ride_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  created_at        DateTime?   @default(now()) @db.Timestamp(6)
   vtc_drivers       vtc_drivers @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_rides         vtc_rides   @relation(fields: [ride_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([driver_id], map: "idx_vtc_commission_ledger_driver")
   @@index([status], map: "idx_vtc_commission_ledger_status")
@@ -909,47 +905,41 @@ model users {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model vtc_drivers {
-  id                    Int         @id @default(autoincrement())
+  id                    Int                     @id @default(autoincrement())
   user_id               Int?
-  first_name            String      @db.VarChar(100)
-  last_name             String      @db.VarChar(100)
-  phone                 String      @db.VarChar(20)
-  email                 String?     @db.VarChar(255)
+  first_name            String                  @db.VarChar(100)
+  last_name             String                  @db.VarChar(100)
+  phone                 String                  @db.VarChar(20)
+  email                 String?                 @db.VarChar(255)
   photo                 String?
-  license_number        String      @unique @db.VarChar(50)
-  license_expiry        DateTime    @db.Date
-  vehicle_type          String      @db.VarChar(50)
-  vehicle_brand         String?     @db.VarChar(50)
-  vehicle_model         String?     @db.VarChar(50)
+  license_number        String                  @unique @db.VarChar(50)
+  license_expiry        DateTime                @db.Date
+  vehicle_type          String                  @db.VarChar(50)
+  vehicle_brand         String?                 @db.VarChar(50)
+  vehicle_model         String?                 @db.VarChar(50)
   vehicle_year          Int?
-  vehicle_color         String?     @db.VarChar(30)
-  license_plate         String      @unique @db.VarChar(20)
-  rating                Decimal?    @default(5.0) @db.Decimal(3, 2)
-  total_rides           Int?        @default(0)
-  status                String?     @default("offline") @db.VarChar(20)
-  current_latitude      Decimal?    @db.Decimal(10, 8)
-  current_longitude     Decimal?    @db.Decimal(11, 8)
-  last_location_update  DateTime?   @db.Timestamp(6)
-  created_at            DateTime?   @default(now()) @db.Timestamp(6)
-  updated_at            DateTime?   @default(now()) @db.Timestamp(6)
-  insurance_number      String?     @db.VarChar(50)
-  insurance_expiry      DateTime?   @db.Date
+  vehicle_color         String?                 @db.VarChar(30)
+  license_plate         String                  @unique @db.VarChar(20)
+  rating                Decimal?                @default(5.0) @db.Decimal(3, 2)
+  total_rides           Int?                    @default(0)
+  status                String?                 @default("offline") @db.VarChar(20)
+  current_latitude      Decimal?                @db.Decimal(10, 8)
+  current_longitude     Decimal?                @db.Decimal(11, 8)
+  last_location_update  DateTime?               @db.Timestamp(6)
+  created_at            DateTime?               @default(now()) @db.Timestamp(6)
+  updated_at            DateTime?               @default(now()) @db.Timestamp(6)
+  insurance_number      String?                 @db.VarChar(50)
+  insurance_expiry      DateTime?               @db.Date
   registration_document String?
   vehicle_photos        String[]
-  seats                 Int?        @default(4)
-  // Vetting state, distinct from `status` (which is operational — online/
-  // offline/busy/suspended). pending/approved/rejected — see
-  // migrate_vtc_driver_verification.ts's doc comment for why this is a
-  // separate column and why the migration's backfill is safe.
-  verification_status   String?     @db.VarChar(20)
+  seats                 Int?                    @default(4)
+  verification_status   String?                 @db.VarChar(20)
   verification_notes    String?
-  verified_at           DateTime?   @db.Timestamp(6)
-  // Visibility-only counter (no automatic suspension threshold) — see
-  // migrate_vtc_driver_cancellations.ts.
-  cancellations_count   Int?        @default(0)
-  customer              customer?   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  vtc_rides             vtc_rides[]
+  verified_at           DateTime?               @db.Timestamp(6)
+  cancellations_count   Int?                    @default(0)
   vtc_commission_ledger vtc_commission_ledger[]
+  customer              customer?               @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_rides             vtc_rides[]
 
   @@index([current_latitude, current_longitude], map: "idx_vtc_drivers_location")
   @@index([status], map: "idx_vtc_drivers_status")
@@ -970,50 +960,46 @@ model vtc_ride_tracking {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model vtc_rides {
-  id                  Int                 @id @default(autoincrement())
-  customer_id         Int
-  driver_id           Int?
-  vehicle_type        String              @db.VarChar(50)
-  pickup_address      String
-  pickup_latitude     Decimal             @db.Decimal(10, 8)
-  pickup_longitude    Decimal             @db.Decimal(11, 8)
-  pickup_time         DateTime?           @db.Timestamp(6)
-  dropoff_address     String
-  dropoff_latitude    Decimal             @db.Decimal(10, 8)
-  dropoff_longitude   Decimal             @db.Decimal(11, 8)
-  dropoff_time        DateTime?           @db.Timestamp(6)
-  base_fare           Decimal             @db.Decimal(10, 2)
-  distance_fare       Decimal?            @default(0) @db.Decimal(10, 2)
-  time_fare           Decimal?            @default(0) @db.Decimal(10, 2)
-  surge_multiplier    Decimal?            @default(1.0) @db.Decimal(3, 2)
-  total_fare          Decimal             @db.Decimal(10, 2)
-  status              String?             @default("requested") @db.VarChar(20)
-  cancellation_reason String?
-  cancelled_by        String?             @db.VarChar(20)
-  customer_rating     Int?
-  driver_rating       Int?
-  customer_feedback   String?
-  driver_feedback     String?
-  payment_method      String              @db.VarChar(50)
-  payment_status      String?             @default("pending") @db.VarChar(20)
-  estimated_distance  Decimal?            @db.Decimal(10, 2)
-  actual_distance     Decimal?            @db.Decimal(10, 2)
-  estimated_duration  Int?
-  actual_duration     Int?
-  created_at          DateTime?           @default(now()) @db.Timestamp(6)
-  updated_at          DateTime?           @default(now()) @db.Timestamp(6)
-  idempotency_key     String?             @db.VarChar(64)
-  // When the ride actually transitioned to 'accepted' — used to compute the
-  // late-cancellation grace period (2 min) and, when scheduled, distinct
-  // from `created_at`. See migrate_vtc_cancellation_fee.ts.
-  accepted_at         DateTime?           @db.Timestamp(6)
-  cancellation_fee    Decimal?            @db.Decimal(10, 2)
-  // 'not_applicable' | 'charged' | 'unpaid' — see RideService.cancelRideWithRefund.
-  cancellation_fee_status String?         @db.VarChar(20)
-  vtc_ride_tracking   vtc_ride_tracking[]
-  customer            customer            @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  vtc_drivers         vtc_drivers?        @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  vtc_commission_ledger vtc_commission_ledger?
+  id                      Int                    @id @default(autoincrement())
+  customer_id             Int
+  driver_id               Int?
+  vehicle_type            String                 @db.VarChar(50)
+  pickup_address          String
+  pickup_latitude         Decimal                @db.Decimal(10, 8)
+  pickup_longitude        Decimal                @db.Decimal(11, 8)
+  pickup_time             DateTime?              @db.Timestamp(6)
+  dropoff_address         String
+  dropoff_latitude        Decimal                @db.Decimal(10, 8)
+  dropoff_longitude       Decimal                @db.Decimal(11, 8)
+  dropoff_time            DateTime?              @db.Timestamp(6)
+  base_fare               Decimal                @db.Decimal(10, 2)
+  distance_fare           Decimal?               @default(0) @db.Decimal(10, 2)
+  time_fare               Decimal?               @default(0) @db.Decimal(10, 2)
+  surge_multiplier        Decimal?               @default(1.0) @db.Decimal(3, 2)
+  total_fare              Decimal                @db.Decimal(10, 2)
+  status                  String?                @default("requested") @db.VarChar(20)
+  cancellation_reason     String?
+  cancelled_by            String?                @db.VarChar(20)
+  customer_rating         Int?
+  driver_rating           Int?
+  customer_feedback       String?
+  driver_feedback         String?
+  payment_method          String                 @db.VarChar(50)
+  payment_status          String?                @default("pending") @db.VarChar(20)
+  estimated_distance      Decimal?               @db.Decimal(10, 2)
+  actual_distance         Decimal?               @db.Decimal(10, 2)
+  estimated_duration      Int?
+  actual_duration         Int?
+  created_at              DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at              DateTime?              @default(now()) @db.Timestamp(6)
+  idempotency_key         String?                @db.VarChar(64)
+  accepted_at             DateTime?              @db.Timestamp(6)
+  cancellation_fee        Decimal?               @db.Decimal(10, 2)
+  cancellation_fee_status String?                @db.VarChar(20)
+  vtc_commission_ledger   vtc_commission_ledger?
+  vtc_ride_tracking       vtc_ride_tracking[]
+  customer                customer               @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vtc_drivers             vtc_drivers?           @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([customer_id, idempotency_key], map: "idx_vtc_rides_idempotency_key", where: raw("(idempotency_key IS NOT NULL)"))
   @@index([customer_id], map: "idx_vtc_rides_customer")

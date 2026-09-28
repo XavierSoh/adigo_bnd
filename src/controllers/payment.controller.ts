@@ -82,12 +82,13 @@ export class PaymentController {
      */
     static async getAllTransactions(req: Request, res: Response): Promise<void> {
         try {
-            const { status, purpose, provider, customer_id, limit, offset } = req.query;
+            const { status, purpose, provider, customer_id, agency_id, limit, offset } = req.query;
             const result = await PaymentTransactionRepository.findAll({
                 status: status as string | undefined,
                 purpose: purpose as string | undefined,
                 provider: provider as string | undefined,
                 customerId: customer_id ? parseInt(customer_id as string) : undefined,
+                agencyId: agency_id ? parseInt(agency_id as string) : undefined,
                 limit: limit ? parseInt(limit as string) : undefined,
                 offset: offset ? parseInt(offset as string) : undefined,
             });

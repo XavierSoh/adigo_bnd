@@ -490,6 +490,22 @@ export class SocketService {
     }
 
     /**
+     * Generic list-invalidation broadcast: tells every client in `room`
+     * that something changed, with no data payload beyond that — unlike
+     * broadcastDashboardUpdate/broadcastNewBooking (which push a full data
+     * snapshot), the receiving screen already knows how to refetch its own
+     * list, so this just needs to be a cheap, uniform "go refetch" signal
+     * reusable across booking lists, generated trips, payments, and VTC
+     * driver verification (see UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md point 1).
+     */
+    static broadcastListChanged(room: string, event: string): void {
+        this.io.to(room).emit(event, {
+            event,
+            timestamp: new Date().toISOString(),
+        });
+    }
+
+    /**
      * Broadcast dashboard update to all connected admins
      */
     static async broadcastDashboardUpdate(agencyId?: number): Promise<void> {

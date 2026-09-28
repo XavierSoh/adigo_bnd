@@ -4,6 +4,7 @@ import prismaDb from "../config/prismaClient";
 import { Prisma } from "@prisma/client";
 import { PaymentTransactionCreateDto } from "../models/payment-transaction.model";
 import ResponseModel from "../models/response.model";
+import { SocketService } from "../services/socket.service";
 
 /**
  * Maps a raw mobile-money provider status to the lowercase vocabulary
@@ -23,6 +24,14 @@ export interface PaymentTransactionListFilters {
     purpose?: string;
     provider?: string;
     customerId?: number;
+    /**
+     * Filters to `purpose: 'booking'` rows whose trip belongs to this
+     * agency. `purpose_ref_id` has no FK (it's polymorphic — points at a
+     * booking id, a ticket id, or nothing depending on `purpose`), so this
+     * can't be expressed as a nested Prisma relation filter; resolved via a
+     * separate lookup instead (see findAll).
+     */
+    agencyId?: number;
     limit?: number;
     offset?: number;
 }
@@ -44,6 +53,7 @@ export class PaymentTransactionRepository {
                     status: 'initiated',
                 },
             });
+            SocketService.broadcastListChanged('dashboard', 'payment_transaction_created');
             return { status: true, message: "Transaction créée", body: result, code: 201 };
         } catch (error: any) {
             console.error("❌ Error creating payment transaction:", error);
@@ -94,7 +104,7 @@ export class PaymentTransactionRepository {
      */
     static async findAll(filters: PaymentTransactionListFilters = {}): Promise<ResponseModel> {
         try {
-            const { status, purpose, provider, customerId } = filters;
+            const { status, purpose, provider, customerId, agencyId } = filters;
             const limit = Math.min(filters.limit ?? 50, 200);
             const offset = filters.offset ?? 0;
 
@@ -103,6 +113,22 @@ export class PaymentTransactionRepository {
             if (purpose) where.purpose = purpose;
             if (provider) where.provider = provider;
             if (customerId) where.customer_id = customerId;
+
+            if (agencyId) {
+                // Only `booking` rows carry an agency (via their trip) —
+                // resolve the matching booking ids first since
+                // purpose_ref_id has no FK to join on directly.
+                const agencyBookings = await prismaDb.booking.findMany({
+                    where: { generated_trip: { trip: { agency_id: agencyId } } },
+                    select: { id: true },
+                });
+                const agencyBookingIds = agencyBookings.map((b) => b.id);
+                if (agencyBookingIds.length === 0) {
+                    return { status: true, message: "Transactions récupérées", body: { transactions: [], total: 0, limit, offset }, code: 200 };
+                }
+                where.purpose = 'booking';
+                where.purpose_ref_id = { in: agencyBookingIds };
+            }
 
             // AMBIGUOUS CASE, flagged not guessed: the original LEFT JOINs
             // customer and flattens 4 of its columns onto each row
@@ -119,12 +145,16 @@ export class PaymentTransactionRepository {
                 }),
                 prismaDb.payment_transaction.count({ where }),
             ]);
+
+            const contextLabelById = await this.resolveContextLabels(rows);
+
             const transactions = rows.map(({ customer, ...pt }) => ({
                 ...pt,
                 customer_first_name: customer?.first_name ?? null,
                 customer_last_name: customer?.last_name ?? null,
                 customer_email: customer?.email ?? null,
                 customer_phone: customer?.phone ?? null,
+                context_label: contextLabelById.get(pt.id) ?? null,
             }));
 
             return {
@@ -136,6 +166,57 @@ export class PaymentTransactionRepository {
         } catch (error: any) {
             return { status: false, message: error.message || "Erreur récupération des transactions", code: 500 };
         }
+    }
+
+    /**
+     * Resolves a display label for the "Agence / Organisateur" column:
+     * the booking's agency for `purpose: 'booking'` rows, the event's
+     * organizer for `purpose: 'ticket_purchase'` rows. `wallet_topup` (and
+     * any future purpose with no such context, e.g. a VTC ride — not
+     * recorded in this table today, see UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md
+     * point 7) resolves to nothing rather than a guess.
+     *
+     * Two batched lookups (not one per row) keyed by transaction id, so a
+     * page of N rows costs at most 2 extra queries regardless of N.
+     */
+    private static async resolveContextLabels(
+        rows: { id: number; purpose: string; purpose_ref_id: number | null }[]
+    ): Promise<Map<number, string>> {
+        const result = new Map<number, string>();
+
+        const bookingRefIds = rows.filter((r) => r.purpose === 'booking' && r.purpose_ref_id != null).map((r) => r.purpose_ref_id as number);
+        const ticketRefIds = rows.filter((r) => r.purpose === 'ticket_purchase' && r.purpose_ref_id != null).map((r) => r.purpose_ref_id as number);
+
+        const [bookings, tickets] = await Promise.all([
+            bookingRefIds.length
+                ? prismaDb.booking.findMany({
+                    where: { id: { in: bookingRefIds } },
+                    select: { id: true, generated_trip: { select: { trip: { select: { agency: { select: { name: true } } } } } } },
+                })
+                : Promise.resolve([]),
+            ticketRefIds.length
+                ? prismaDb.event_ticket.findMany({
+                    where: { id: { in: ticketRefIds } },
+                    // `event.organizer_id` relation is named `event_organizer`
+                    // on the Prisma model, not `organizer`.
+                    select: { id: true, event: { select: { event_organizer: { select: { name: true } } } } },
+                })
+                : Promise.resolve([]),
+        ]);
+
+        const agencyByBookingId = new Map(bookings.map((b) => [b.id, b.generated_trip?.trip?.agency?.name ?? null]));
+        const organizerByTicketId = new Map(tickets.map((t) => [t.id, t.event?.event_organizer?.name ?? null]));
+
+        for (const row of rows) {
+            if (row.purpose === 'booking' && row.purpose_ref_id != null) {
+                const agencyName = agencyByBookingId.get(row.purpose_ref_id);
+                if (agencyName) result.set(row.id, agencyName);
+            } else if (row.purpose === 'ticket_purchase' && row.purpose_ref_id != null) {
+                const organizerName = organizerByTicketId.get(row.purpose_ref_id);
+                if (organizerName) result.set(row.id, organizerName);
+            }
+        }
+        return result;
     }
 
     /**

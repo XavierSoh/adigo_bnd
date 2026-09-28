@@ -37,6 +37,21 @@ function parseCustomHours(value: unknown): Record<string, unknown> | undefined {
     return undefined;
 }
 
+// Same multipart/form-data quirk as parseCoordinate: an Int/Boolean column
+// still arrives as a string ("20", "true") through form-data, which Prisma
+// does not auto-coerce for a typed Int/Boolean input.
+function parseIntField(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const parsed = typeof value === 'number' ? value : parseInt(value as string, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseBoolField(value: unknown): boolean | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    return value === 'true' || value === '1';
+}
+
 export class AgencyController {
     static async createAgency(req: Request, res: Response) {
         // Gestion du fichier logo (à implémenter selon votre middleware de fichiers)
@@ -85,7 +100,10 @@ export class AgencyController {
             logo: logoPath || req.body.logo,
             latitude: parseCoordinate(req.body.latitude),
             longitude: parseCoordinate(req.body.longitude),
-            custom_hours: parseCustomHours(req.body.custom_hours)
+            custom_hours: parseCustomHours(req.body.custom_hours),
+            late_cancellation_grace_hours: parseIntField(req.body.late_cancellation_grace_hours),
+            late_cancellation_fee_percent: parseIntField(req.body.late_cancellation_fee_percent),
+            requires_seat_selection: parseBoolField(req.body.requires_seat_selection),
         };
 
         const response = await AgencyRepository.update(parseInt(id), updateData);

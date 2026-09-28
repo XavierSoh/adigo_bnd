@@ -68,6 +68,21 @@ describe('VtcNotificationService', () => {
             expect(payload.data.type).toBe('vtc_ride_offered');
         });
 
+        // Point 3 (UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md): this is the one
+        // push that must reach a driver even backgrounded/killed via a
+        // full-screen-intent local notification the app itself builds — a
+        // plain notification-message on the default channel would let the
+        // OS silently auto-display it instead, exactly the gap being closed.
+        it('is dataOnly on the dedicated driver-offer channel, never the default one', async () => {
+            mockedRideFindUnique.mockResolvedValue(fakeRide());
+
+            await VtcNotificationService.sendRideOffered(1);
+
+            const [, payload] = mockedSendToDevice.mock.calls[0];
+            expect(payload.dataOnly).toBe(true);
+            expect(payload.androidChannelId).toBe('vtc_driver_offer_channel');
+        });
+
         it('is a silent no-op when the driver has no linked customer account', async () => {
             mockedRideFindUnique.mockResolvedValue(fakeRide({ vtc_drivers: { first_name: 'Jean', last_name: 'Dupont', customer: null } }));
 
@@ -90,6 +105,19 @@ describe('VtcNotificationService', () => {
             const [, payload] = mockedSendToDevice.mock.calls[0];
             expect(payload.body).toContain('Jean Dupont');
             expect(payload.data.type).toBe('vtc_ride_accepted');
+        });
+
+        // Point 3a: every ordinary VTC step push (not the driver-offer one
+        // above) rings on its own 'vtc_channel' instead of silently
+        // inheriting the chat notification sound, and is a normal
+        // notification-message (not dataOnly) — the OS can auto-display it
+        // as-is, no custom full-screen handling needed for these.
+        it('rings on vtc_channel, not chat_messages, and is a normal (non-dataOnly) push', async () => {
+            mockedRideFindUnique.mockResolvedValue(fakeRide());
+            await VtcNotificationService.sendRideAccepted(1);
+            const [, payload] = mockedSendToDevice.mock.calls[0];
+            expect(payload.androidChannelId).toBe('vtc_channel');
+            expect(payload.dataOnly).toBeFalsy();
         });
     });
 

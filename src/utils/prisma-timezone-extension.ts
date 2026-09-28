@@ -40,6 +40,22 @@
 
 import { Prisma } from '@prisma/client';
 
+// STATUS (2026-09-23): this extension is currently a no-op. `src/index.ts`
+// forces `process.env.TZ = "UTC"` before anything else in the process
+// (added 2026-09-09 to fix a *different* naive-timestamp bug, see that
+// file's own comment) — which makes `new Date().getTimezoneOffset()` below
+// always return 0 everywhere this app runs, dev or VPS. That was the
+// intended supersession: the DB itself was also fixed the same day to
+// genuinely store UTC (`ALTER DATABASE adigo_db SET timezone TO 'UTC'`), so
+// forcing the Node process to also *think* in UTC is what keeps every
+// naive-timestamp read/write correct today. This extension's own
+// compensation is dormant, not broken — safe to leave registered (harmless
+// identity shift) or to remove; don't spend time "fixing" the offset
+// calculation below, it's inert by design of the newer TZ=UTC fix, not by
+// accident. See UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md point 5 for the
+// separate, still-real bug this was initially (and incorrectly) suspected
+// of being related to: a *write-path* bug in how the desktop app serializes
+// trip departure/arrival times, unrelated to this extension.
 const LOCAL_TZ_OFFSET_MS = -new Date().getTimezoneOffset() * 60000;
 
 function fromPrismaTimestamp(date: Date): Date {

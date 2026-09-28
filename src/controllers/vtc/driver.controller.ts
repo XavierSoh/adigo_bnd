@@ -9,6 +9,7 @@ import { Request, Response } from 'express';
 import driverService, { DriverNotVerifiedError } from '../../services/vtc/driver.service';
 import { VtcNotificationService } from '../../services/vtc/vtcNotification.service';
 import { CreateDriverDto, UpdateDriverDto, UpdateDriverLocationDto, VerifyDriverDto } from '../../models/vtc/driver.model';
+import { SocketService } from '../../services/socket.service';
 
 type UploadedFiles = { [fieldname: string]: Express.Multer.File[] } | undefined;
 
@@ -114,6 +115,10 @@ export class DriverController {
       }
 
       const driver = await driverService.registerSelf(req.userId, data);
+
+      // Wakes up the desktop "Vérification" queue (previously fetch-once,
+      // manual-refresh-only — see UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md point 1).
+      SocketService.broadcastListChanged('vtc_dispatch', 'vtc_driver_verification_submitted');
 
       return res.status(201).json({ success: true, data: driver });
     } catch (error: any) {

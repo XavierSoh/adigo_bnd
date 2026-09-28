@@ -26,6 +26,7 @@ import { WalletRepository } from "./wallet.repository";
 import { I18n, Language } from "../utils/i18n";
 import { BookingNotificationService } from "../services/bookingNotification.service";
 import { AdminNotificationService, AdminLabel } from "../services/adminNotification.service";
+import { SocketService } from "../services/socket.service";
 
 // --- Reusable nested-select fragments, matching the original's json_build_object field lists exactly ---
 
@@ -520,7 +521,17 @@ export class BookingRepository {
                             first_name: true, last_name: true, phone: true, email: true,
                         },
                     },
-                    generated_trip: { select: { actual_departure_time: true, trip: { select: { departure_city: true, arrival_city: true } } } },
+                    generated_trip: {
+                        select: {
+                            actual_departure_time: true,
+                            trip: {
+                                select: {
+                                    departure_city: true, arrival_city: true,
+                                    agency: { select: { late_cancellation_grace_hours: true, late_cancellation_fee_percent: true } },
+                                },
+                            },
+                        },
+                    },
                 },
             });
 
@@ -579,10 +590,33 @@ export class BookingRepository {
                 // once its settlement handler confirms the charge) has
                 // real money to give back.
                 if (booking.total_price <= 0 || booking.payment_status !== 'paid') continue;
+
+                // Point 4 (UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md): a late
+                // cancellation withholds a per-agency percentage instead of
+                // always refunding in full. "Late" = within
+                // late_cancellation_grace_hours of the scheduled departure.
+                // Defaults (2h / 0%) match this repository's own historical
+                // behavior (full refund) for any agency that hasn't set
+                // these — see the migration's column defaults.
+                const agencySettings = booking.generated_trip.trip.agency;
+                const graceHours = agencySettings?.late_cancellation_grace_hours ?? 2;
+                const feePercent = agencySettings?.late_cancellation_fee_percent ?? 0;
+                const departureTime = booking.generated_trip.actual_departure_time;
+                const isLateCancellation = departureTime
+                    ? Date.now() > new Date(departureTime).getTime() - graceHours * 60 * 60 * 1000
+                    : false;
+                const feeWithheld = isLateCancellation
+                    ? Math.round(booking.total_price * feePercent / 100)
+                    : 0;
+                const refundAmount = booking.total_price - feeWithheld;
+
+                const feeNote = feeWithheld > 0
+                    ? ` - ${feePercent}% frais d'annulation tardive retenus (${feeWithheld} XAF)`
+                    : '';
                 const refundResult = await WalletRepository.recordRefund(
                     booking.customer_id,
-                    booking.total_price,
-                    `Booking cancellation refund (paid via ${booking.payment_method}) - ${booking.booking_reference || 'Ref: ' + booking.id}`
+                    refundAmount,
+                    `Booking cancellation refund (paid via ${booking.payment_method}) - ${booking.booking_reference || 'Ref: ' + booking.id}${feeNote}`
                 );
                 if (!refundResult.status) {
                     console.error(`⚠️ Warning: Booking ${booking.id} cancelled but wallet refund failed:`, refundResult.message);
@@ -590,7 +624,7 @@ export class BookingRepository {
                 }
                 BookingNotificationService.sendRefundCredited(
                     booking.customer_booking_customer_idTocustomer,
-                    booking.total_price,
+                    refundAmount,
                     refundResult.body.new_balance
                 ).catch((err) => console.error(`⚠️ Warning: refund_credited push failed for booking ${booking.id}:`, err));
             }
@@ -600,6 +634,13 @@ export class BookingRepository {
             // part of it, so it still holds after the write) reproduces
             // that exactly, not "all requested ids regardless of match."
             const result = await prismaDb.booking.findMany({ where: { id: { in: bookingIds }, is_deleted: false } });
+
+            // Desktop booking list screens (bookings_screen/all_bookings_screen/
+            // customer_bookings_screen) aren't in the 'new_booking' broadcast
+            // path (that only fires on creation) — without this, a
+            // cancellation from one admin session never shows up on another's
+            // screen without a manual refresh.
+            SocketService.broadcastListChanged('dashboard', 'booking_list_changed');
 
             return { status: true, message: I18n.t('bookings_cancelled', lang), body: result, code: 200 };
         } catch (error) {

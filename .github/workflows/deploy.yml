@@ -37,4 +37,5 @@ jobs:
             DATABASE_URL=$(grep '^DATABASE_URL=' .env | cut -d= -f2- | cut -d'?' -f1)
             psql "$DATABASE_URL" -f migrations/add_created_by_to_event.sql || true
             psql "$DATABASE_URL" -f migrations/ticketing_admin_surface_rebuild.sql || true
+            psql "$DATABASE_URL" -f migrations/agency_cancellation_and_seat_selection_settings.sql || true
             pm2 restart adigo-api || pm2 start ecosystem.config.js

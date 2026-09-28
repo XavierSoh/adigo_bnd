@@ -49,6 +49,16 @@ export interface NotificationPayload {
     body: string;
     data?: { [key: string]: string };
     imageUrl?: string;
+    // Every push used to hardcode the 'chat_messages' Android channel and
+    // always include a top-level `notification` block — fine for chat, but
+    // a VTC ride offer needs its own channel (distinct ringtone) and, to
+    // wake a backgrounded/killed driver app into showing a full-screen
+    // accept/decline UI rather than a plain system tray line, a data-only
+    // payload the app's own handler controls end to end (see
+    // VtcNotificationService.sendRideOffered and
+    // UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md point 3).
+    androidChannelId?: string;
+    dataOnly?: boolean;
 }
 
 export interface ChatNotificationData {
@@ -74,19 +84,17 @@ export class NotificationService {
         }
 
         try {
+            const channelId = notification.androidChannelId || 'chat_messages';
             const message: any = {
                 token: fcmToken,
-                notification: {
-                    title: notification.title,
-                    body: notification.body,
-                },
                 data: notification.data || {},
                 android: {
+                    // 'high' delivers immediately instead of being batched —
+                    // required for a data-only message to actually wake a
+                    // backgrounded/killed app's background handler promptly
+                    // (the whole point of dataOnly for a time-sensitive ride
+                    // offer), not just for notification-message payloads.
                     priority: 'high' as const,
-                    notification: {
-                        sound: 'default',
-                        channelId: 'chat_messages',
-                    }
                 },
                 apns: {
                     payload: {
@@ -98,8 +106,27 @@ export class NotificationService {
                 }
             };
 
-            if (notification.imageUrl) {
-                message.notification.imageUrl = notification.imageUrl;
+            if (notification.dataOnly) {
+                // No top-level `notification` block: the OS must not
+                // auto-display anything on its own — the app's own
+                // foreground/background handler is entirely responsible for
+                // building and showing the (possibly full-screen-intent)
+                // local notification, on whichever channel it chooses.
+                // Title/body still ride along inside `data` so the handler
+                // has them without a second round trip.
+                message.data = { ...message.data, title: notification.title, body: notification.body };
+            } else {
+                message.notification = {
+                    title: notification.title,
+                    body: notification.body,
+                };
+                message.android.notification = {
+                    sound: 'default',
+                    channelId,
+                };
+                if (notification.imageUrl) {
+                    message.notification.imageUrl = notification.imageUrl;
+                }
             }
 
             const response = await messaging.send(message);

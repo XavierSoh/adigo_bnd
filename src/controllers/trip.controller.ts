@@ -3,32 +3,42 @@ import { Request, Response } from 'express';
 import { TripModel } from '../models/trip.model';
 import { TripRepository } from '../repository/trip.repository';
 import { TripGenerationService } from '../services/tripGeneration.service';
+import { parseTimezoneAwareDate, AmbiguousDateError } from '../utils/parseTimezoneAwareDate';
 
 export class TripController {
     static async create(req: Request, res: Response): Promise<void> {
         try {
-            const tripData: TripModel = {
-                departure_city: req.body.departure_city,
-                arrival_city: req.body.arrival_city,
-                departure_time: new Date(req.body.departure_time),
-                arrival_time: new Date(req.body.arrival_time),
-                price: parseFloat(req.body.price),
-                bus_id: parseInt(req.body.bus_id),
-                agency_id: parseInt(req.body.agency_id),
-                is_active: req.body.is_active ?? true,
-                cancellation_policy: req.body.cancellation_policy,
-                is_deleted: false,
-                recurrence_pattern: req.body.recurrence_pattern ? {
-                    type: req.body.recurrence_pattern.type,
-                    interval: parseInt(req.body.recurrence_pattern.interval),
-                    days_of_week: req.body.recurrence_pattern.days_of_week,
-                    end_date: req.body.recurrence_pattern.end_date ? new Date(req.body.recurrence_pattern.end_date) : undefined,
-                    exceptions: req.body.recurrence_pattern.exceptions?.map((date: string) => new Date(date))
-                } : undefined,
-                valid_from: new Date(req.body.valid_from),
-                valid_until: req.body.valid_until ? new Date(req.body.valid_until) : undefined,
-                created_by: req.body.created_by
-            };
+            let tripData: TripModel;
+            try {
+                tripData = {
+                    departure_city: req.body.departure_city,
+                    arrival_city: req.body.arrival_city,
+                    departure_time: parseTimezoneAwareDate(req.body.departure_time, 'departure_time'),
+                    arrival_time: parseTimezoneAwareDate(req.body.arrival_time, 'arrival_time'),
+                    price: parseFloat(req.body.price),
+                    bus_id: parseInt(req.body.bus_id),
+                    agency_id: parseInt(req.body.agency_id),
+                    is_active: req.body.is_active ?? true,
+                    cancellation_policy: req.body.cancellation_policy,
+                    is_deleted: false,
+                    recurrence_pattern: req.body.recurrence_pattern ? {
+                        type: req.body.recurrence_pattern.type,
+                        interval: parseInt(req.body.recurrence_pattern.interval),
+                        days_of_week: req.body.recurrence_pattern.days_of_week,
+                        end_date: req.body.recurrence_pattern.end_date ? parseTimezoneAwareDate(req.body.recurrence_pattern.end_date, 'recurrence_pattern.end_date') : undefined,
+                        exceptions: req.body.recurrence_pattern.exceptions?.map((date: string) => parseTimezoneAwareDate(date, 'recurrence_pattern.exceptions'))
+                    } : undefined,
+                    valid_from: parseTimezoneAwareDate(req.body.valid_from, 'valid_from'),
+                    valid_until: req.body.valid_until ? parseTimezoneAwareDate(req.body.valid_until, 'valid_until') : undefined,
+                    created_by: req.body.created_by
+                };
+            } catch (err) {
+                if (err instanceof AmbiguousDateError) {
+                    res.status(400).json({ status: false, message: err.message, code: 400 });
+                    return;
+                }
+                throw err;
+            }
 
             // Basic validation
             if (!tripData.departure_city || !tripData.arrival_city) {
@@ -127,15 +137,23 @@ export class TripController {
             // Only update fields that are provided
             if (req.body.departure_city !== undefined) updateData.departure_city = req.body.departure_city;
             if (req.body.arrival_city !== undefined) updateData.arrival_city = req.body.arrival_city;
-            if (req.body.departure_time !== undefined) updateData.departure_time = new Date(req.body.departure_time);
-            if (req.body.arrival_time !== undefined) updateData.arrival_time = new Date(req.body.arrival_time);
+            try {
+                if (req.body.departure_time !== undefined) updateData.departure_time = parseTimezoneAwareDate(req.body.departure_time, 'departure_time');
+                if (req.body.arrival_time !== undefined) updateData.arrival_time = parseTimezoneAwareDate(req.body.arrival_time, 'arrival_time');
+                if (req.body.valid_from !== undefined) updateData.valid_from = parseTimezoneAwareDate(req.body.valid_from, 'valid_from');
+                if (req.body.valid_until !== undefined) updateData.valid_until = parseTimezoneAwareDate(req.body.valid_until, 'valid_until');
+            } catch (err) {
+                if (err instanceof AmbiguousDateError) {
+                    res.status(400).json({ status: false, message: err.message, code: 400 });
+                    return;
+                }
+                throw err;
+            }
             if (req.body.price !== undefined) updateData.price = parseFloat(req.body.price);
             if (req.body.bus_id !== undefined) updateData.bus_id = parseInt(req.body.bus_id);
             if (req.body.agency_id !== undefined) updateData.agency_id = parseInt(req.body.agency_id);
             if (req.body.is_active !== undefined) updateData.is_active = req.body.is_active;
             if (req.body.cancellation_policy !== undefined) updateData.cancellation_policy = req.body.cancellation_policy;
-            if (req.body.valid_from !== undefined) updateData.valid_from = new Date(req.body.valid_from);
-            if (req.body.valid_until !== undefined) updateData.valid_until = new Date(req.body.valid_until);
 
             if (req.body.recurrence_pattern !== undefined) {
                 updateData.recurrence_pattern = req.body.recurrence_pattern ? {

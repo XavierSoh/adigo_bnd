@@ -11,6 +11,7 @@ import { Prisma } from "@prisma/client";
 import prismaDb from "../config/prismaClient";
 import { GeneratedTripModel } from "../models/generated_trip.model";
 import ResponseModel from "../models/response.model";
+import { SocketService } from "../services/socket.service";
 
 // `json_build_object('id', b.id, ...) AS bus` selected an EXPLICIT column
 // list from `bus`, not `SELECT b.*` — replicated with a matching Prisma
@@ -95,10 +96,28 @@ export class GeneratedTripRepository {
         }
     }
 
-    // Delete generated trip
+    // Delete generated trip. Mirrors deleteBatch's active-booking guard
+    // (booking.generated_trip_id has ON DELETE NO ACTION, so deleting a trip
+    // with a live booking used to fall straight into the generic 500 catch
+    // below instead of a clear business error) — checked explicitly here
+    // for the same clean message rather than relying on catching the FK
+    // violation.
     static async delete(id: number): Promise<ResponseModel> {
         try {
+            const hasBooking = await prismaDb.booking.findFirst({
+                where: { generated_trip_id: id },
+                select: { id: true },
+            });
+            if (hasBooking) {
+                return {
+                    status: false,
+                    message: "Impossible de supprimer : ce voyage a des réservations actives",
+                    code: 409,
+                };
+            }
+
             await prismaDb.generated_trip.delete({ where: { id } });
+            SocketService.broadcastListChanged('dashboard', 'generated_trip_changed');
             return { status: true, message: "Voyage généré supprimé", code: 200 };
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
@@ -131,6 +150,10 @@ export class GeneratedTripRepository {
             const message = blockedIds.length > 0
                 ? `${result.count} voyage(s) généré(s) supprimé(s), ${blockedIds.length} ignoré(s) (réservation(s) active(s))`
                 : `${result.count} voyage(s) généré(s) supprimé(s)`;
+
+            if (result.count > 0) {
+                SocketService.broadcastListChanged('dashboard', 'generated_trip_changed');
+            }
 
             return {
                 status: true,
@@ -208,7 +231,7 @@ export class GeneratedTripRepository {
                             departure_time: true, arrival_time: true, price: true,
                             bus_id: true, agency_id: true, is_active: true,
                             valid_from: true, valid_until: true,
-                            agency: { select: { id: true, name: true, logo: true, phone: true, email: true, address: true } },
+                            agency: { select: { id: true, name: true, logo: true, phone: true, email: true, address: true, requires_seat_selection: true } },
                         },
                     },
                 },

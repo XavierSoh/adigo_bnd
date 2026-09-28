@@ -22,15 +22,33 @@ jest.mock('../../src/config/prismaClient', () => ({
             findMany: jest.fn(),
             count: jest.fn(),
         },
+        booking: {
+            findMany: jest.fn(),
+        },
+        event_ticket: {
+            findMany: jest.fn(),
+        },
+    },
+}));
+
+jest.mock('../../src/services/socket.service', () => ({
+    SocketService: {
+        broadcastListChanged: jest.fn(),
     },
 }));
 
 import prismaDb from '../../src/config/prismaClient';
+import { SocketService } from '../../src/services/socket.service';
 import { PaymentTransactionRepository } from '../../src/repository/payment-transaction.repository';
 
 const mockedCreate = prismaDb.payment_transaction.create as jest.Mock;
 const mockedUpdateMany = prismaDb.payment_transaction.updateMany as jest.Mock;
 const mockedFindUnique = prismaDb.payment_transaction.findUnique as jest.Mock;
+const mockedFindMany = prismaDb.payment_transaction.findMany as jest.Mock;
+const mockedCount = prismaDb.payment_transaction.count as jest.Mock;
+const mockedBookingFindMany = prismaDb.booking.findMany as jest.Mock;
+const mockedEventTicketFindMany = prismaDb.event_ticket.findMany as jest.Mock;
+const mockedBroadcast = SocketService.broadcastListChanged as jest.Mock;
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -116,6 +134,8 @@ describe('PaymentTransactionRepository.create', () => {
                 status: 'initiated',
             },
         });
+        // Point 1: the desktop Paiements screen only refetches on this event.
+        expect(mockedBroadcast).toHaveBeenCalledWith('dashboard', 'payment_transaction_created');
     });
 
     it('defaults purpose_ref_id to null and omits metadata when not provided', async () => {
@@ -164,5 +184,92 @@ describe('PaymentTransactionRepository.updateStatus', () => {
 
         expect(result.status).toBe(false);
         expect(result.code).toBe(404);
+    });
+});
+
+/**
+ * Point 7 (UX_FUNCTIONAL_REVAMP_PLAN_2026-09.md): agency filter + the
+ * "Agence / Organisateur" context column. purpose_ref_id has no FK (it
+ * points at a booking id or a ticket id depending on `purpose`), so both
+ * the agency filter and the context label are resolved via separate
+ * lookups rather than a Prisma relation filter/include — this is exactly
+ * the logic under test here.
+ */
+describe('PaymentTransactionRepository.findAll', () => {
+    it('with no agencyId, does not touch booking/event_ticket at all', async () => {
+        mockedFindMany.mockResolvedValueOnce([]);
+        mockedCount.mockResolvedValueOnce(0);
+
+        await PaymentTransactionRepository.findAll({});
+
+        expect(mockedBookingFindMany).not.toHaveBeenCalled();
+        const [findManyArgs] = mockedFindMany.mock.calls[0];
+        expect(findManyArgs.where.purpose).toBeUndefined();
+    });
+
+    it('agencyId with no matching bookings short-circuits to an empty page, no payment_transaction query at all', async () => {
+        mockedBookingFindMany.mockResolvedValueOnce([]);
+
+        const result = await PaymentTransactionRepository.findAll({ agencyId: 5 });
+
+        expect((result.body as any).transactions).toEqual([]);
+        expect((result.body as any).total).toBe(0);
+        expect(mockedFindMany).not.toHaveBeenCalled();
+    });
+
+    it('agencyId forces purpose=booking and filters purpose_ref_id to that agency\'s booking ids', async () => {
+        mockedBookingFindMany.mockResolvedValueOnce([{ id: 10 }, { id: 11 }]);
+        mockedFindMany.mockResolvedValueOnce([]);
+        mockedCount.mockResolvedValueOnce(0);
+
+        await PaymentTransactionRepository.findAll({ agencyId: 5 });
+
+        const [findManyArgs] = mockedFindMany.mock.calls[0];
+        expect(findManyArgs.where.purpose).toBe('booking');
+        expect(findManyArgs.where.purpose_ref_id).toEqual({ in: [10, 11] });
+    });
+
+    it('resolves context_label from the booking\'s agency for purpose=booking rows', async () => {
+        mockedFindMany.mockResolvedValueOnce([
+            { id: 1, purpose: 'booking', purpose_ref_id: 77, customer: null },
+        ]);
+        mockedCount.mockResolvedValueOnce(1);
+        mockedBookingFindMany.mockResolvedValueOnce([
+            { id: 77, generated_trip: { trip: { agency: { name: 'Agence Douala' } } } },
+        ]);
+
+        const result = await PaymentTransactionRepository.findAll({});
+
+        const [row] = (result.body as any).transactions;
+        expect(row.context_label).toBe('Agence Douala');
+    });
+
+    it('resolves context_label from the event\'s organizer for purpose=ticket_purchase rows', async () => {
+        mockedFindMany.mockResolvedValueOnce([
+            { id: 2, purpose: 'ticket_purchase', purpose_ref_id: 55, customer: null },
+        ]);
+        mockedCount.mockResolvedValueOnce(1);
+        mockedEventTicketFindMany.mockResolvedValueOnce([
+            { id: 55, event: { event_organizer: { name: 'Yaoundé Events' } } },
+        ]);
+
+        const result = await PaymentTransactionRepository.findAll({});
+
+        const [row] = (result.body as any).transactions;
+        expect(row.context_label).toBe('Yaoundé Events');
+    });
+
+    it('leaves context_label null for wallet_topup rows — no agency/organizer concept applies', async () => {
+        mockedFindMany.mockResolvedValueOnce([
+            { id: 3, purpose: 'wallet_topup', purpose_ref_id: null, customer: null },
+        ]);
+        mockedCount.mockResolvedValueOnce(1);
+
+        const result = await PaymentTransactionRepository.findAll({});
+
+        const [row] = (result.body as any).transactions;
+        expect(row.context_label).toBeNull();
+        expect(mockedBookingFindMany).not.toHaveBeenCalled();
+        expect(mockedEventTicketFindMany).not.toHaveBeenCalled();
     });
 });
