@@ -509,6 +509,37 @@ export class CustomerController {
         }
     }
 
+    // Self-service account deletion from the mobile app — operates on
+    // req.userId, same reasoning as changePassword above. Anonymizes the
+    // personal data (see CustomerRepository.deleteOwnAccount), then removes
+    // the uploaded files the anonymized rows no longer point at.
+    static async deleteOwnAccount(req: Request, res: Response): Promise<void> {
+        try {
+            const result = await CustomerRepository.deleteOwnAccount(req.userId!);
+
+            const files = result.status
+                ? (result.body as { files?: string[] } | undefined)?.files ?? []
+                : [];
+            // Only the basename is trusted, and only inside the known upload
+            // dirs (profile picture, driver photo, private "carte grise") —
+            // process.cwd(), not __dirname - see upload.middleware.ts for why.
+            const uploadDirs = ['uploads/profile-pictures', 'uploads/vtc-drivers', 'uploads-private/vtc-drivers'];
+            for (const file of files) {
+                for (const dir of uploadDirs) {
+                    fs.unlink(path.join(process.cwd(), dir, path.basename(file)), (err) => {
+                        if (err && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+                            console.error('❌ [CustomerController] Failed to delete a file of a deleted account:', err);
+                        }
+                    });
+                }
+            }
+
+            res.status(result.code).json(result.status ? { ...result, body: undefined } : result);
+        } catch (error) {
+            res.status(500).json({ status: false, message: "Erreur serveur", code: 500 });
+        }
+    }
+
     // Resend the email-verification link — operates on req.userId, same
     // reasoning as changePassword above.
     static async resendVerificationEmail(req: Request, res: Response): Promise<void> {

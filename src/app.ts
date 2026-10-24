@@ -59,13 +59,22 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Language detection middleware (doit être après express.json())
 app.use(languageMiddleware);
 
-// Home page
-app.get('/', (req, res) => {
-  const publicPath = path.join(__dirname, '../src/public/index.html');
-  const distPublicPath = path.join(__dirname, '../public/index.html');
+// Static public pages — src/public in dev, dist/public (copied by
+// scripts/copy-assets.js) once compiled.
+const sendPublicPage = (file: string) => (req: express.Request, res: express.Response) => {
+  const publicPath = path.join(__dirname, '../src/public', file);
+  const distPublicPath = path.join(__dirname, '../public', file);
   const filePath = fs.existsSync(publicPath) ? publicPath : distPublicPath;
   res.sendFile(filePath);
-});
+};
+
+// Home page
+app.get('/', sendPublicPage('index.html'));
+
+// Google Play requires a public privacy policy URL and a public
+// account-deletion URL (Play Console → App content).
+app.get('/privacy', sendPublicPage('privacy.html'));
+app.get('/delete-account', sendPublicPage('delete-account.html'));
 
 // Swagger documentation
 app.use('/v1/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {

@@ -32,6 +32,9 @@ customerRouter.get("/verify-email/:token", CustomerController.verifyEmailToken);
 // ============================================
 customerRouter.patch("/change-password", authMiddleware, CustomerController.changePassword);
 customerRouter.post("/resend-verification-email", authMiddleware, CustomerController.resendVerificationEmail);
+// Must stay above the staff-only `delete("/:id")` below, which would
+// otherwise match "/me" first.
+customerRouter.delete("/me", authMiddleware, CustomerController.deleteOwnAccount);
 
 // ============================================
 // Staff-only (list/search/bulk/hard-delete/admin bypass) — MUST be

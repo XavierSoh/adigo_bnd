@@ -439,6 +439,109 @@ export class CustomerRepository {
         }
     }
 
+    // Self-service account deletion (Google Play account-deletion policy) —
+    // a plain softDelete keeps every personal field, which Play explicitly
+    // does not count as deletion. This soft-deletes AND wipes the personal
+    // data; bookings/payments/rides keep their customer_id link (accounting
+    // retention, disclosed in src/public/privacy.html) but now point at an
+    // anonymous row. Refused while the wallet still holds money, so a
+    // customer can't silently forfeit a balance — support refunds it first.
+    static async deleteOwnAccount(id: number): Promise<ResponseModel> {
+        try {
+            const customer = await prismaDb.customer.findFirst({
+                where: { id, is_deleted: false },
+                select: { wallet_balance: true, profile_picture: true },
+            });
+            if (!customer) {
+                return { status: false, message: "Client non trouvé ou déjà supprimé", code: 404 };
+            }
+            if ((customer.wallet_balance ?? 0) > 0) {
+                return {
+                    status: false,
+                    message: "Votre portefeuille n'est pas vide. Contactez le support pour récupérer votre solde avant de supprimer votre compte.",
+                    body: { reason: "wallet_not_empty", wallet_balance: customer.wallet_balance },
+                    code: 409,
+                };
+            }
+
+            const now = new Date();
+            const drivers = await prismaDb.vtc_drivers.findMany({
+                where: { user_id: id },
+                select: { id: true, photo: true, registration_document: true },
+            });
+
+            await prismaDb.$transaction([
+                // Passenger details typed at booking time (often the
+                // customer themselves) — same identity data, same treatment.
+                prismaDb.booking_passenger.updateMany({
+                    where: { booking: { customer_id: id } },
+                    data: { name: "Passager supprimé", phone: null, document_type: null, document_number: null },
+                }),
+                // A driver profile carries its own copy of the identity plus
+                // licence/insurance/plate data — wiped the same way. Its
+                // unique non-null columns get a per-row placeholder.
+                ...drivers.map((d) => prismaDb.vtc_drivers.update({
+                    where: { id: d.id },
+                    data: {
+                        first_name: "Chauffeur",
+                        last_name: "supprimé",
+                        phone: "",
+                        email: null,
+                        photo: null,
+                        license_number: `deleted-${d.id}`,
+                        license_plate: `deleted-${d.id}`,
+                        insurance_number: null,
+                        registration_document: null,
+                        current_latitude: null,
+                        current_longitude: null,
+                        status: "offline",
+                        updated_at: now,
+                    },
+                })),
+                prismaDb.customer.update({
+                where: { id },
+                data: {
+                    first_name: "Compte",
+                    last_name: "supprimé",
+                    email: null,
+                    phone: null,
+                    // Not a bcrypt hash, so no password can ever match it.
+                    password: `deleted:${crypto.randomBytes(16).toString("hex")}`,
+                    date_of_birth: null,
+                    gender: null,
+                    address: null,
+                    city: null,
+                    id_card_number: null,
+                    id_card_type: null,
+                    profile_picture: null,
+                    fcm_token: null,
+                    default_orange_money_number: null,
+                    default_mtn_mobile_money_number: null,
+                    google_id: null,
+                    email_verification_token: null,
+                    email_verification_expires_at: null,
+                    password_reset_code: null,
+                    password_reset_expires_at: null,
+                    notification_enabled: false,
+                    is_active: false,
+                    is_deleted: true,
+                    deleted_at: now,
+                    deleted_by: null,
+                    updated_at: now,
+                },
+                }),
+            ]);
+
+            const files = [
+                customer.profile_picture,
+                ...drivers.flatMap((d) => [d.photo, d.registration_document]),
+            ].filter((f): f is string => !!f);
+            return { status: true, message: "Compte supprimé", body: { files }, code: 200 };
+        } catch (error) {
+            return { status: false, message: "Erreur lors de la suppression du compte", code: 500 };
+        }
+    }
+
     // Restore
     static async restore(id: number): Promise<ResponseModel> {
         try {
