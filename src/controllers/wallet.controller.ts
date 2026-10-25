@@ -61,15 +61,17 @@ export class WalletController {
                 return;
             }
 
-            // Same staff-token exception as getBalance: a customer can only
-            // top up its own wallet, but staff need this to record a cash
-            // deposit a client hands over at the counter — that's exactly
-            // what this cash/manual-only endpoint is for (see the check
-            // below).
-            if (!req.userRole && req.userId !== customerId) {
+            // Staff only. This endpoint credits the wallet on the caller's word
+            // (cash handed over at the counter, admin adjustment) — it used to
+            // also accept a customer's own token, so any customer could pick
+            // "cash" in the app and credit themselves any amount without
+            // paying. Customers top up through Orange Money instead
+            // (POST /v1/api/payments/orange-money/wallet-topup), which only
+            // credits once Orange confirms the payment.
+            if (!req.userRole) {
                 res.status(403).json({
                     status: false,
-                    message: "You can only top up your own wallet",
+                    message: "Rechargement réservé au personnel Adigo. Utilisez Orange Money depuis l'application.",
                     code: 403
                 });
                 return;
