@@ -11,15 +11,26 @@ import ResponseModel from "../../models/response.model";
 const withJoins = {
     event_category: true,
     event_organizer: true,
+    // Only to derive min_price/max_price below — the mobile list/detail read
+    // those (no event-level price column exists), and without them every
+    // paid event rendered as "Free".
+    event_ticket_type: { where: { is_active: true }, select: { price: true } },
 } satisfies Prisma.eventInclude;
 
 /** `category`/`organizer` — the original's json alias names — instead of
  * Prisma's relation names (`event_category`/`event_organizer`, needed
  * because the schema also has an unrelated `event_category[]` reverse
  * relation elsewhere, forcing the full name here). */
-function mapEvent<T extends { event_category: unknown; event_organizer: unknown }>(row: T) {
-    const { event_category, event_organizer, ...rest } = row;
-    return { ...rest, category: event_category, organizer: event_organizer };
+function mapEvent<T extends { event_category: unknown; event_organizer: unknown; event_ticket_type: { price: number }[] }>(row: T) {
+    const { event_category, event_organizer, event_ticket_type, ...rest } = row;
+    const prices = event_ticket_type.map((t) => t.price);
+    return {
+        ...rest,
+        category: event_category,
+        organizer: event_organizer,
+        min_price: prices.length ? Math.min(...prices) : null,
+        max_price: prices.length ? Math.max(...prices) : null,
+    };
 }
 
 export class EventRepository {
