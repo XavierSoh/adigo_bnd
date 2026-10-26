@@ -955,10 +955,9 @@ export class CustomerController {
                 return;
             }
 
-            // Update customer with FCM token
-            const result = await CustomerRepository.update(id, {
-                fcm_token: fcm_token
-            } as any);
+            // Méthode dédiée : update() ne retient que sa liste de champs et
+            // ignorait fcm_token — aucun jeton n'était jamais enregistré.
+            const result = await CustomerRepository.setFcmToken(id, String(fcm_token));
 
             if (result.status) {
                 res.status(200).json({
@@ -1001,9 +1000,7 @@ export class CustomerController {
             }
 
             // Remove FCM token by setting it to null
-            const result = await CustomerRepository.update(id, {
-                fcm_token: null
-            } as any);
+            const result = await CustomerRepository.setFcmToken(id, null);
 
             if (result.status) {
                 res.status(200).json({

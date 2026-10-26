@@ -10,7 +10,8 @@ import { I18n } from '../../utils/i18n';
 // AdminTransactionsRepository, see BOOKING_MODULE_NOTES.md ("Full Prisma
 // relational-API migration", tier 3).
 import { AdminTransactionsRepository } from '../repositories/admin-transactions.repository';
-import { WalletRepository } from "../../repository/wallet.repository";
+import { TicketRefundService } from "../services/ticket-refund.service";
+import { TicketingNotifier } from "../services/ticketing-notifier.service";
 
 export class AdminTransactionsController {
 
@@ -61,12 +62,18 @@ export class AdminTransactionsController {
     static async getTicketTransactions(req: Request, res: Response): Promise<void> {
         try {
             const lang = req.lang || 'en';
-            const { limit = 50, offset = 0, status } = req.query;
+            const { limit = 50, offset = 0, status, payment_status, payment_method, event_id, search } = req.query as Record<string, string | undefined>;
 
             const { transactions, total } = await AdminTransactionsRepository.getTicketTransactions(
                 parseInt(limit as string),
                 parseInt(offset as string),
-                status as string | undefined
+                {
+                    status: status || undefined,
+                    payment_status: payment_status || undefined,
+                    payment_method: payment_method || undefined,
+                    event_id: event_id ? parseInt(event_id) : undefined,
+                    search: search?.trim() || undefined,
+                }
             );
 
             res.status(200).json({
@@ -166,7 +173,7 @@ export class AdminTransactionsController {
         try {
             const lang = req.lang || 'en';
             const transactionId = parseInt((req.params as { id: string }).id);
-            const { reason } = req.body;
+            const { reason, amount } = req.body ?? {};
 
             if (!reason) {
                 res.status(400).json({
@@ -177,44 +184,24 @@ export class AdminTransactionsController {
                 return;
             }
 
-            // Get the original ticket purchase (see getTransactionById —
-            // this screen works off event_ticket, not wallet_transaction).
-            const ticket = await AdminTransactionsRepository.findTicketForRefund(transactionId);
-
-            if (!ticket) {
-                res.status(404).json({
-                    status: false,
-                    message: I18n.t('transaction_not_found', lang),
-                    code: 404
-                });
+            // Toujours sur le portefeuille, en une transaction (billet,
+            // portefeuille, places libérées) et protégé contre le double
+            // remboursement — voir TicketRefundService. `amount` facultatif
+            // (défaut : totalité).
+            const refund = await TicketRefundService.refund(transactionId, {
+                amount: amount === undefined || amount === null || amount === '' ? undefined : Number(amount),
+                reason: String(reason),
+            });
+            if (refund.ok === false) {
+                res.status(refund.code).json({ status: false, message: refund.message, code: refund.code });
                 return;
             }
-
-            if (ticket.payment_status !== 'paid' && ticket.payment_status !== 'confirmed') {
-                res.status(400).json({
-                    status: false,
-                    message: 'Can only refund a paid ticket',
-                    code: 400
-                });
-                return;
-            }
-
-            // Refund goes to the wallet regardless of the original payment
-            // method (cash/mobile money can't be auto-reversed) — same
-            // deliberate rule booking cancellations follow, see
-            // WalletRepository.recordRefund and BOOKING_MODULE_NOTES.md.
-            const refundTx = await WalletRepository.recordRefund(
-                ticket.customer_id,
-                ticket.total_price,
-                `Refund for ticket ${ticket.reference} - ${reason}`
-            );
-
-            await AdminTransactionsRepository.markRefunded(transactionId);
+            void TicketingNotifier.ticketRefunded(transactionId, refund.amount, String(reason));
 
             res.status(200).json({
                 status: true,
                 message: I18n.t('refund_processed', lang),
-                body: refundTx,
+                body: refund,
                 code: 200
             });
         } catch (error) {

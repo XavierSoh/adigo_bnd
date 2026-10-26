@@ -20,7 +20,7 @@
  *     Exits 1 if none found.
  *
  *   ticket_status --id <ticketId>
- *     Prints JSON {"status":"...","totalPrice":N,"paymentStatus":"..."}
+ *     Prints JSON {"status":"...","totalPrice":N,"paymentStatus":"...","cancelRequestStatus":"..."|null}
  *     for one event_ticket, or "null" if not found.
  *
  *   ticket_type_sold --id <ticketTypeId>
@@ -67,8 +67,17 @@ async function walletBalance(args: string[]) {
 }
 
 async function findPurchasableTicketType() {
+    // Même règles que TicketPurchaseService.checkSellable : événement en
+    // vente (publié, non suspendu, pas terminé), type actif, dans sa
+    // période de vente.
+    const now = new Date();
     const types = await prismaDb.event_ticket_type.findMany({
-        where: { event: { status: 'published', is_deleted: false } },
+        where: {
+            is_active: true,
+            event: { status: 'published', is_deleted: false, sales_paused: false, event_date: { gt: now } },
+            OR: [{ sale_start: null }, { sale_start: { lte: now } }],
+            AND: [{ OR: [{ sale_end: null }, { sale_end: { gte: now } }] }],
+        },
         select: { id: true, event_id: true, price: true, quantity: true, sold: true },
         orderBy: { id: 'desc' },
     });
@@ -98,10 +107,10 @@ async function ticketStatus(args: string[]) {
     }
     const ticket = await prismaDb.event_ticket.findUnique({
         where: { id: parseInt(idStr!, 10) },
-        select: { status: true, total_price: true, payment_status: true },
+        select: { status: true, total_price: true, payment_status: true, cancel_request_status: true },
     });
     console.log(ticket
-        ? JSON.stringify({ status: ticket.status, totalPrice: ticket.total_price, paymentStatus: ticket.payment_status })
+        ? JSON.stringify({ status: ticket.status, totalPrice: ticket.total_price, paymentStatus: ticket.payment_status, cancelRequestStatus: ticket.cancel_request_status })
         : 'null');
 }
 

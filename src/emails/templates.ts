@@ -229,6 +229,63 @@ export function adminNotificationEmail(lang: Language, params: {
     };
 }
 
+export function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
+ * Billetterie (TICKETING_MODULE_PLAN_2026-10.md §5.5) : email purement
+ * informatif — un titre, un paragraphe, un encadré de détails, une note.
+ * Aucun bouton : les actions se font dans l'app ou sur adigo2. Le contenu
+ * déjà traduit est fourni par TicketingNotifier ; les valeurs saisies par
+ * des personnes (titres, motifs) sont échappées ici.
+ */
+export function ticketingInfoEmail(lang: Language, params: {
+    subject: string;
+    title: string;
+    intro: string;
+    rows?: Array<[string, string]>;
+    note?: string;
+    footer: string;
+}): EmailContent {
+    const { subject, title, intro, rows = [], note, footer } = params;
+    const rowsHtml = rows.map(([label, value], i) => `
+        <tr>
+          <td style="padding:8px 16px 8px 0;color:#8a8a92;font-size:12px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;vertical-align:top;${i > 0 ? 'border-top:1px solid #ececf2;' : ''}">${escapeHtml(label)}</td>
+          <td style="padding:8px 0;color:#222;font-size:14px;font-weight:600;text-align:right;${i > 0 ? 'border-top:1px solid #ececf2;' : ''}">${escapeHtml(value)}</td>
+        </tr>`).join('');
+    const box = rows.length
+        ? `<div style="background:#f7f7fb;border-left:4px solid ${BRAND_ACCENT};border-radius:8px;padding:4px 20px;margin:20px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rowsHtml}</table>
+           </div>`
+        : '';
+    const signature = lang === 'en' ? '- The ADIGO team' : "- L'équipe ADIGO";
+    const text = [
+        title,
+        '',
+        intro,
+        ...(rows.length ? ['', ...rows.map(([l, v]) => `${l}: ${v}`)] : []),
+        ...(note ? ['', note] : []),
+        '',
+        signature,
+    ].join('\n');
+
+    return {
+        subject,
+        text,
+        html: layout(lang, escapeHtml(title), `
+            <p>${escapeHtml(intro)}</p>
+            ${box}
+            ${note ? `<p style="color:#777;font-size:13px;">${escapeHtml(note)}</p>` : ''}
+        `, escapeHtml(footer)),
+    };
+}
+
 export function verificationResultPage(lang: Language, ok: boolean): string {
     const title = ok
         ? (lang === 'en' ? 'Email confirmed!' : 'Email confirmé !')

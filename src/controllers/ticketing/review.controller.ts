@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { ReviewRepository } from "../../repository/ticketing/review.repository";
 
+// Écriture authentifiée : l'auteur d'un avis est toujours le client du
+// token (le corps de la requête permettait de publier au nom de n'importe qui).
 export class ReviewController {
 
     static async getByEventId(req: Request, res: Response) {
@@ -16,21 +18,26 @@ export class ReviewController {
     }
 
     static async create(req: Request, res: Response) {
-        const response = await ReviewRepository.create(req.body);
+        const { event_id, rating, comment } = (req.body ?? {}) as { event_id?: number; rating?: number; comment?: string };
+        const eventId = Number(event_id);
+        const value = Number(rating);
+        if (!eventId || !Number.isInteger(value) || value < 1 || value > 5) {
+            res.status(400).json({ status: false, message: "event_id et une note de 1 à 5 sont requis", code: 400 });
+            return;
+        }
+        const response = await ReviewRepository.create({ event_id: eventId, customer_id: req.userId!, rating: value, comment });
         res.status(response.code).json(response);
     }
 
     static async update(req: Request, res: Response) {
         const { id } = req.params as { id: string };
-        const { customer_id } = req.body as { customer_id: number };
-        const response = await ReviewRepository.update(parseInt(id), customer_id, req.body);
+        const response = await ReviewRepository.update(parseInt(id), req.userId!, req.body ?? {});
         res.status(response.code).json(response);
     }
 
     static async delete(req: Request, res: Response) {
         const { id } = req.params as { id: string };
-        const customerId = (req.body?.customer_id ?? req.query.customerId) as string | number;
-        const response = await ReviewRepository.delete(parseInt(id), parseInt(customerId as string));
+        const response = await ReviewRepository.delete(parseInt(id), req.userId!);
         res.status(response.code).json(response);
     }
 

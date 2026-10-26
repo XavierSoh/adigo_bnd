@@ -1,121 +1,81 @@
 import { Request, Response } from "express";
-import { EventRepository } from "../../repository/ticketing/event.repository";
+import { EventRepository, PublicEventFilters } from "../../repository/ticketing/event.repository";
 import { TicketTypeRepository } from "../../repository/ticketing/ticket-type.repository";
-import { EventSearchParams } from "../../models/ticketing";
+
+// Lecture publique des événements. Les écritures (création, publication,
+// annulation, types de billet) sont servies par AdminManagementController,
+// réservé aux admins — voir routes/ticketing/index.ts.
+
+function isAdmin(req: Request): boolean {
+    return ['admin', 'super_admin'].includes((req.userRole ?? '').toLowerCase());
+}
+
+function num(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+}
+
+function date(value: unknown): Date | undefined {
+    if (typeof value !== 'string' || !value) return undefined;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+function filtersFrom(query: Record<string, unknown>): PublicEventFilters {
+    const limit = num(query.limit) ?? 50;
+    // L'app envoie `page` (1-based) ; `offset` reste accepté.
+    const page = num(query.page);
+    const offset = num(query.offset) ?? (page && page > 1 ? (page - 1) * limit : 0);
+    return {
+        search: typeof query.search === 'string' && query.search.trim() ? query.search.trim() : undefined,
+        category_id: num(query.category_id),
+        city: typeof query.city === 'string' && query.city.trim() ? query.city.trim() : undefined,
+        organizer_id: num(query.organizer_id),
+        is_featured: query.is_featured === 'true',
+        start_date: date(query.start_date),
+        end_date: date(query.end_date),
+        min_price: num(query.min_price),
+        max_price: num(query.max_price),
+        limit,
+        offset,
+    };
+}
 
 export class EventController {
 
     static async getAll(req: Request, res: Response) {
-        const { limit, offset } = req.query as { limit?: string; offset?: string };
-        const response = await EventRepository.findAll(
-            limit ? parseInt(limit) : undefined,
-            offset ? parseInt(offset) : undefined
-        );
+        const response = await EventRepository.findPublic(filtersFrom(req.query as Record<string, unknown>));
         res.status(response.code).json(response);
     }
 
     static async search(req: Request, res: Response) {
-        const {
-            search, category_id, city, status, organizer_id,
-            is_featured, start_date, end_date, limit, offset
-        } = req.query as Record<string, string | undefined>;
-
-        const params: EventSearchParams = {
-            search,
-            category_id: category_id ? parseInt(category_id) : undefined,
-            city,
-            status: status as EventSearchParams['status'],
-            organizer_id: organizer_id ? parseInt(organizer_id) : undefined,
-            is_featured: is_featured === 'true',
-            start_date: start_date ? new Date(start_date) : undefined,
-            end_date: end_date ? new Date(end_date) : undefined,
-            limit: limit ? parseInt(limit) : undefined,
-            offset: offset ? parseInt(offset) : undefined
-        };
-
-        const response = await EventRepository.search(params);
+        const response = await EventRepository.findPublic(filtersFrom(req.query as Record<string, unknown>));
         res.status(response.code).json(response);
     }
 
     static async getById(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await EventRepository.findById(parseInt(id));
+        const id = parseInt((req.params as { id: string }).id);
+        const response = await EventRepository.findVisibleById(id, isAdmin(req));
         if (response.status) {
-            EventRepository.incrementViews(parseInt(id)).catch(() => {});
+            EventRepository.incrementViews(id).catch(() => {});
         }
         res.status(response.code).json(response);
     }
 
     static async getByCode(req: Request, res: Response) {
         const { code } = req.params as { code: string };
-        const response = await EventRepository.findByCode(code);
+        const response = await EventRepository.findVisibleByCode(code, isAdmin(req));
         res.status(response.code).json(response);
     }
-
-    static async create(req: Request, res: Response) {
-        const response = await EventRepository.create(req.body);
-        res.status(response.code).json(response);
-    }
-
-    static async update(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await EventRepository.update(parseInt(id), req.body);
-        res.status(response.code).json(response);
-    }
-
-    // Neither of these publishes directly anymore — organizers submit for
-    // admin validation; only EventValidationController.approveEvent (the
-    // real admin-gated route, under /admin/events/:id/approve) sets
-    // status='published'. Both kept (rather than removed) so any existing
-    // caller of either route keeps working, just without the ability to
-    // self-approve.
-    static async publish(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await EventRepository.submitForValidation(parseInt(id));
-        res.status(response.code).json(response);
-    }
-
-    static async approve(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await EventRepository.submitForValidation(parseInt(id));
-        res.status(response.code).json(response);
-    }
-
-    static async cancel(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await EventRepository.updateStatus(parseInt(id), 'cancelled');
-        res.status(response.code).json(response);
-    }
-
-    static async delete(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await EventRepository.delete(parseInt(id));
-        res.status(response.code).json(response);
-    }
-
-    // Ticket types (nested under an event)
 
     static async getTicketTypes(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await TicketTypeRepository.findByEventId(parseInt(id));
-        res.status(response.code).json(response);
-    }
-
-    static async createTicketType(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await TicketTypeRepository.create({ ...req.body, event_id: parseInt(id) });
-        res.status(response.code).json(response);
-    }
-
-    static async updateTicketType(req: Request, res: Response) {
-        const { typeId } = req.params as { id: string; typeId: string };
-        const response = await TicketTypeRepository.update(parseInt(typeId), req.body);
-        res.status(response.code).json(response);
-    }
-
-    static async deleteTicketType(req: Request, res: Response) {
-        const { typeId } = req.params as { id: string; typeId: string };
-        const response = await TicketTypeRepository.delete(parseInt(typeId));
+        const id = parseInt((req.params as { id: string }).id);
+        if (!(await EventRepository.isVisible(id, isAdmin(req)))) {
+            res.status(404).json({ status: false, message: "Événement non trouvé", code: 404 });
+            return;
+        }
+        const response = await TicketTypeRepository.findByEventId(id, !isAdmin(req));
         res.status(response.code).json(response);
     }
 }

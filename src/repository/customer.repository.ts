@@ -358,6 +358,25 @@ export class CustomerRepository {
     // self-service endpoint has no business granting. Neither field was
     // ever sent by the mobile app through this path (confirmed), so this
     // is a pure hardening with no client-side impact.
+    /**
+     * Jeton FCM du téléphone du client (null à la déconnexion). Hors de
+     * update(), dont la liste de champs ne le contient pas — le jeton y
+     * était ignoré en silence et aucun push client ne partait.
+     */
+    static async setFcmToken(id: number, token: string | null): Promise<ResponseModel> {
+        try {
+            const result = await prismaDb.customer.updateMany({
+                where: { id, is_deleted: false },
+                data: { fcm_token: token, updated_at: new Date() },
+            });
+            if (result.count === 0) return { status: false, message: "Client non trouvé", code: 404 };
+            return { status: true, message: "Jeton FCM mis à jour", code: 200 };
+        } catch (error) {
+            console.error('❌ [CustomerRepository] Error updating FCM token:', error);
+            return { status: false, message: "Erreur lors de la mise à jour du jeton FCM", code: 500 };
+        }
+    }
+
     static async update(id: number, customer: Partial<Customer>): Promise<ResponseModel> {
         try {
             // Original used `COALESCE($n, column)` per field: an

@@ -275,6 +275,7 @@ model customer {
   event_review                                                 event_review[]
   event_review_event_review_flagged_byTocustomer               event_review[]        @relation("event_review_flagged_byTocustomer")
   event_ticket                                                 event_ticket[]
+  event_controller                                             event_controller[]
   event_ticket_resale_event_ticket_resale_buyer_idTocustomer   event_ticket_resale[] @relation("event_ticket_resale_buyer_idTocustomer")
   event_ticket_resale_event_ticket_resale_created_byTocustomer event_ticket_resale[] @relation("event_ticket_resale_created_byTocustomer")
   event_ticket_resale_event_ticket_resale_seller_idTocustomer  event_ticket_resale[] @relation("event_ticket_resale_seller_idTocustomer")
@@ -336,6 +337,7 @@ model event {
   cancellation_reason             String?
   cancelled_at                    DateTime?             @db.Timestamp(6)
   created_by                      Int?
+  sales_paused                    Boolean               @default(false)
   event_category                  event_category        @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_event_created_byTousers   users?                @relation("event_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                           users?                @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -346,6 +348,9 @@ model event {
   event_ticket                    event_ticket[]
   event_ticket_resale             event_ticket_resale[]
   event_ticket_type               event_ticket_type[]
+  event_controller                event_controller[]
+  ticket_scan                     ticket_scan[]
+  organizer_payout                organizer_payout[]
 
   @@index([category_id], map: "idx_event_category")
   @@index([city], map: "idx_event_city")
@@ -383,36 +388,38 @@ model event_favorite {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model event_organizer {
-  id                                       Int       @id @default(autoincrement())
-  customer_id                              Int?      @unique
-  name                                     String    @db.VarChar(255)
-  type                                     String?   @default("individual") @db.VarChar(50)
-  phone                                    String    @db.VarChar(20)
-  email                                    String    @db.VarChar(100)
-  logo                                     String?   @db.VarChar(255)
+  id                                       Int                @id @default(autoincrement())
+  customer_id                              Int?               @unique
+  name                                     String             @db.VarChar(255)
+  type                                     String?            @default("individual") @db.VarChar(50)
+  phone                                    String             @db.VarChar(20)
+  email                                    String             @db.VarChar(100)
+  logo                                     String?            @db.VarChar(255)
   description                              String?
-  is_verified                              Boolean?  @default(false)
-  verified_at                              DateTime? @db.Timestamp(6)
+  is_verified                              Boolean?           @default(false)
+  verified_at                              DateTime?          @db.Timestamp(6)
   verified_by                              Int?
-  verification_status                      String?   @default("pending") @db.VarChar(20)
-  id_card_front                            String?   @db.VarChar(255)
-  id_card_back                             String?   @db.VarChar(255)
-  rccm_document                            String?   @db.VarChar(255)
+  verification_status                      String?            @default("pending") @db.VarChar(20)
+  id_card_front                            String?            @db.VarChar(255)
+  id_card_back                             String?            @db.VarChar(255)
+  rccm_document                            String?            @db.VarChar(255)
   rejection_reason                         String?
-  total_events                             Int?      @default(0)
-  total_sales                              Int?      @default(0)
-  created_at                               DateTime? @default(now()) @db.Timestamp(6)
-  updated_at                               DateTime? @db.Timestamp(6)
-  is_deleted                               Boolean   @default(false)
-  deleted_at                               DateTime? @db.Timestamp(6)
+  total_events                             Int?               @default(0)
+  total_sales                              Int?               @default(0)
+  created_at                               DateTime?          @default(now()) @db.Timestamp(6)
+  updated_at                               DateTime?          @db.Timestamp(6)
+  is_deleted                               Boolean            @default(false)
+  deleted_at                               DateTime?          @db.Timestamp(6)
   deleted_by                               Int?
   verification_notes                       String?
   payment_info                             String?
   venue_authorization                      String?
+  commission_rate                          Decimal?           @db.Decimal(5, 2)
   event                                    event[]
-  customer                                 customer? @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users_event_organizer_deleted_byTousers  users?    @relation("event_organizer_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_event_organizer_verified_byTousers users?    @relation("event_organizer_verified_byTousers", fields: [verified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  organizer_payout                         organizer_payout[]
+  customer                                 customer?          @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_event_organizer_deleted_byTousers  users?             @relation("event_organizer_deleted_byTousers", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_event_organizer_verified_byTousers users?             @relation("event_organizer_verified_byTousers", fields: [verified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -445,29 +452,41 @@ model event_review {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model event_ticket {
-  id                  Int                   @id @default(autoincrement())
-  reference           String?               @unique @db.VarChar(20)
-  event_id            Int
-  ticket_type_id      Int
-  customer_id         Int
-  quantity            Int                   @default(1)
-  unit_price          Int
-  total_price         Int
-  payment_method      String?               @db.VarChar(20)
-  payment_status      String?               @default("pending") @db.VarChar(20)
-  payment_ref         String?               @db.VarChar(100)
-  qr_code             String?               @db.VarChar(255)
-  status              String?               @default("pending") @db.VarChar(20)
-  used_at             DateTime?             @db.Timestamp(6)
-  created_at          DateTime?             @default(now()) @db.Timestamp(6)
-  is_deleted          Boolean               @default(false)
-  deleted_at          DateTime?             @db.Timestamp(6)
-  deleted_by          Int?
-  customer            customer              @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users               users?                @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  event               event                 @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  event_ticket_type   event_ticket_type     @relation(fields: [ticket_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  event_ticket_resale event_ticket_resale[]
+  id                    Int                   @id @default(autoincrement())
+  reference             String?               @unique @db.VarChar(20)
+  event_id              Int
+  ticket_type_id        Int
+  customer_id           Int
+  quantity              Int                   @default(1)
+  unit_price            Int
+  total_price           Int
+  payment_method        String?               @db.VarChar(20)
+  payment_status        String?               @default("pending") @db.VarChar(20)
+  payment_ref           String?               @db.VarChar(100)
+  qr_code               String?               @db.VarChar(255)
+  status                String?               @default("pending") @db.VarChar(20)
+  used_at               DateTime?             @db.Timestamp(6)
+  created_at            DateTime?             @default(now()) @db.Timestamp(6)
+  is_deleted            Boolean               @default(false)
+  deleted_at            DateTime?             @db.Timestamp(6)
+  deleted_by            Int?
+  commission_rate       Decimal?              @db.Decimal(5, 2)
+  commission_amount     Int?
+  checked_in_count      Int                   @default(0)
+  cancel_request_status String?               @db.VarChar(20)
+  cancel_requested_at   DateTime?             @db.Timestamp(6)
+  cancel_request_reason String?
+  cancel_decided_at     DateTime?             @db.Timestamp(6)
+  cancel_decided_by     Int?
+  cancel_decision_note  String?
+  refunded_amount       Int?
+  refunded_at           DateTime?             @db.Timestamp(6)
+  customer              customer              @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                 users?                @relation(fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event                 event                 @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_ticket_type     event_ticket_type     @relation(fields: [ticket_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event_ticket_resale   event_ticket_resale[]
+  ticket_scan           ticket_scan[]
 
   @@index([customer_id], map: "idx_ticket_customer")
   @@index([event_id], map: "idx_ticket_event")
@@ -1050,4 +1069,56 @@ model system_settings {
   users         users?    @relation(fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([category, setting_key], map: "uq_system_settings_category_key")
+}
+
+model event_controller {
+  id                     Int       @id @default(autoincrement())
+  event_id               Int
+  customer_id            Int
+  status                 String    @default("invited") @db.VarChar(20)
+  invited_by_user_id     Int?
+  invited_by_customer_id Int?
+  invited_at             DateTime  @default(now()) @db.Timestamp(6)
+  responded_at           DateTime? @db.Timestamp(6)
+  revoked_at             DateTime? @db.Timestamp(6)
+  event                  event     @relation(fields: [event_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer               customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([event_id, customer_id], map: "uq_event_controller_event_customer")
+  @@index([customer_id, status], map: "idx_event_controller_customer")
+}
+
+model ticket_scan {
+  id                     Int          @id @default(autoincrement())
+  ticket_id              Int
+  event_id               Int
+  admitted               Int
+  scanned_by_customer_id Int?
+  scanned_by_user_id     Int?
+  scanned_at             DateTime     @default(now()) @db.Timestamp(6)
+  event_ticket           event_ticket @relation(fields: [ticket_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  event                  event        @relation(fields: [event_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([ticket_id], map: "idx_ticket_scan_ticket")
+  @@index([event_id], map: "idx_ticket_scan_event")
+}
+
+model organizer_payout {
+  id              Int             @id @default(autoincrement())
+  organizer_id    Int
+  event_id        Int?
+  amount          Int
+  method          String          @db.VarChar(20)
+  reference       String?         @db.VarChar(100)
+  notes           String?
+  paid_at         DateTime        @default(now()) @db.Timestamp(6)
+  created_by      Int?
+  created_at      DateTime        @default(now()) @db.Timestamp(6)
+  is_deleted      Boolean         @default(false)
+  deleted_at      DateTime?       @db.Timestamp(6)
+  deleted_by      Int?
+  event_organizer event_organizer @relation(fields: [organizer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event           event?          @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([organizer_id], map: "idx_organizer_payout_organizer")
 }
