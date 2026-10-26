@@ -99,7 +99,7 @@ export class AdminReportsRepository {
         // unconditional subqueries (only the ticket revenue itself was).
         const [ticketRevenueAgg, premiumAgg] = await Promise.all([
             prismaDb.event_ticket.aggregate({
-                where: { is_deleted: false, ...ticketDateFilter },
+                where: { is_deleted: false, payment_status: 'paid', ...ticketDateFilter },
                 _sum: { total_price: true },
             }),
             prismaDb.event.aggregate({
@@ -130,7 +130,7 @@ export class AdminReportsRepository {
                 _count: { _all: true },
             }),
             prismaDb.event_ticket.findMany({
-                where: { is_deleted: false, ...ticketDateFilter, event: { is_deleted: false, organizer_id: { in: organizers.map((o) => o.id) } } },
+                where: { is_deleted: false, payment_status: 'paid', ...ticketDateFilter, event: { is_deleted: false, organizer_id: { in: organizers.map((o) => o.id) } } },
                 select: { total_price: true, event: { select: { organizer_id: true } } },
             }),
             prismaDb.event.groupBy({
@@ -139,7 +139,7 @@ export class AdminReportsRepository {
                 _count: { _all: true },
             }),
             prismaDb.event_ticket.findMany({
-                where: { is_deleted: false, ...ticketDateFilter, event: { is_deleted: false, category_id: { in: categories.map((c) => c.id) } } },
+                where: { is_deleted: false, payment_status: 'paid', ...ticketDateFilter, event: { is_deleted: false, category_id: { in: categories.map((c) => c.id) } } },
                 select: { total_price: true, event: { select: { category_id: true } } },
             }),
         ]);

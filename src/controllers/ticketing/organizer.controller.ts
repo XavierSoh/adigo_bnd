@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { OrganizerRepository } from "../../repository/ticketing/organizer.repository";
 
+// Routes historiques /organizers, réservées aux admins (routes/ticketing/index.ts).
+// Création, modification et suppression passent par AdminManagementController.
 export class OrganizerController {
 
     static async getAll(req: Request, res: Response) {
@@ -20,27 +22,9 @@ export class OrganizerController {
         res.status(response.code).json(response);
     }
 
-    static async create(req: Request, res: Response) {
-        const response = await OrganizerRepository.create(req.body);
-        res.status(response.code).json(response);
-    }
-
-    static async update(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await OrganizerRepository.update(parseInt(id), req.body);
-        res.status(response.code).json(response);
-    }
-
     static async verify(req: Request, res: Response) {
         const { id } = req.params as { id: string };
-        const { verified_by } = req.body as { verified_by: number };
-        const response = await OrganizerRepository.verify(parseInt(id), verified_by);
-        res.status(response.code).json(response);
-    }
-
-    static async delete(req: Request, res: Response) {
-        const { id } = req.params as { id: string };
-        const response = await OrganizerRepository.delete(parseInt(id));
+        const response = await OrganizerRepository.verify(parseInt(id), req.userId);
         res.status(response.code).json(response);
     }
 }

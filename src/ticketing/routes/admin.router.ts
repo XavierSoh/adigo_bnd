@@ -1,21 +1,18 @@
 /**
- * Ticketing admin router — the fixed subset of the "rich" ticketing
- * module's admin surface, mounted under the live "simple" ticketing router
- * at /v1/api/ticketing/admin/* and /v1/api/ticketing/organizer/*. See
- * BOOKING_MODULE_NOTES.md ("Ticketing admin surface rebuild") for why only
- * these 10 routers are wired here and not the rich module's own duplicate
- * /events, /categories, /organizers, /tickets, /favorites, /reviews,
- * /resale sub-routers (those stay unmounted — the simple module already
- * serves that CRUD correctly).
+ * Ticketing admin router — mounted under the live "simple" ticketing router
+ * at /v1/api/ticketing/admin/* and /v1/api/ticketing/organizer/*.
  *
- * Everything under /admin requires staff auth + admin role — the original
- * rich module mounted these with NO auth at all (pre-existing gap, not
- * introduced here); adminRoleMiddleware was already sitting unused in
- * src/middleware, built for exactly this.
- * /organizer/:id/* is organizer-facing (an organizer viewing their own
- * dashboard), not desktop-admin — gated by auth only, no role check.
+ * Everything here requires staff auth + admin role (adminRoleMiddleware).
+ *
+ * Billetterie opérée par Adigo (TICKETING_MODULE_PLAN_2026-10.md) : les
+ * routes de gestion (organisateurs, événements, types de billet, suivi,
+ * contrôleurs, annulations, reversements, commission, images) s'ajoutent
+ * aux routes historiques du tableau de bord, des transactions, de la
+ * modération et des rapports. Les routes fixes (`/events/stats`,
+ * `/organizers/pending`…) sont déclarées AVANT leurs voisines `/:id`.
  */
-import { Router } from 'express';
+import { NextFunction, Request, Response, Router } from 'express';
+import multer from 'multer';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { adminRoleMiddleware } from '../../middleware/admin-role.middleware';
 import { AdminAnalyticsController } from '../controllers/admin-analytics.controller';
@@ -29,6 +26,22 @@ import { AdminTransactionsController } from '../controllers/admin-transactions.c
 import { AdminUsersController } from '../controllers/admin-users.controller';
 import { EventValidationController } from '../controllers/event-validation.controller';
 import { OrganizerDashboardController } from '../controllers/organizer-dashboard.controller';
+import { AdminManagementController as M } from '../controllers/admin-management.controller';
+import { uploadEventPoster, uploadOrganizerLogo } from '../middleware/upload.event.middleware';
+
+/** multer renvoie ses erreurs (type, taille) en JSON plutôt qu'en page HTML 500. */
+function singleImage(uploader: multer.Multer) {
+    return (req: Request, res: Response, next: NextFunction) => {
+        uploader.single('image')(req, res, (err: unknown) => {
+            if (err) {
+                const message = err instanceof Error ? err.message : 'Image refusée';
+                res.status(400).json({ status: false, message, code: 400 });
+                return;
+            }
+            next();
+        });
+    };
+}
 
 const adminTicketingRouter = Router();
 adminTicketingRouter.use(authMiddleware, adminRoleMiddleware);
@@ -45,20 +58,62 @@ adminTicketingRouter.get('/users/search', AdminUsersController.searchUsers);
 adminTicketingRouter.get('/users/:id/transactions', AdminUsersController.getUserTransactions);
 adminTicketingRouter.get('/users/:id/tickets', AdminUsersController.getUserTickets);
 adminTicketingRouter.get('/users/:id/wallet', AdminUsersController.getUserWallet);
+// Fiche organisateur liée au compte client (carte « Profil organisateur »
+// de la fiche utilisateur d'adigo2) — body null si aucune.
+adminTicketingRouter.get('/users/:id/organizer-profile', M.organizerProfileOfCustomer);
 adminTicketingRouter.get('/users/:id', AdminUsersController.getUserById);
 adminTicketingRouter.patch('/users/:id/status', AdminUsersController.updateUserStatus);
 adminTicketingRouter.get('/users', AdminUsersController.getAllUsers);
 
-// Organizer validation (event-validation.controller.ts also owns
-// /events/pending and /events/:id/approve|reject below)
+// Images (logo organisateur, affiche d'événement) — renvoient le chemin à
+// enregistrer ensuite dans la fiche (`/uploads/...`).
+adminTicketingRouter.post('/uploads/event-image', singleImage(uploadEventPoster), M.uploadedImage('events/posters'));
+adminTicketingRouter.post('/uploads/organizer-logo', singleImage(uploadOrganizerLogo), M.uploadedImage('organizers'));
+
+// Organisateurs — la file de vérification historique reste disponible.
 adminTicketingRouter.get('/organizers/pending', EventValidationController.getPendingOrganizers);
 adminTicketingRouter.post('/organizers/:id/verify', EventValidationController.verifyOrganizer);
+adminTicketingRouter.get('/organizers', M.listOrganizers);
+adminTicketingRouter.post('/organizers', M.createOrganizer);
+adminTicketingRouter.get('/organizers/:id', M.organizerDetail);
+adminTicketingRouter.put('/organizers/:id', M.updateOrganizer);
+adminTicketingRouter.delete('/organizers/:id', M.deleteOrganizer);
+adminTicketingRouter.post('/organizers/:id/payouts', M.recordPayout);
 
-// Event validation
+// Reversements
+adminTicketingRouter.get('/payouts/balances', M.balances);
+adminTicketingRouter.get('/payouts', M.listPayouts);
+adminTicketingRouter.delete('/payouts/:id', M.deletePayout);
+
+// Événements — validation historique d'abord (routes fixes), puis gestion.
 adminTicketingRouter.get('/events/stats', EventValidationController.getEventsStats);
 adminTicketingRouter.get('/events/pending', EventValidationController.getPendingEvents);
-adminTicketingRouter.post('/events/:id/approve', EventValidationController.approveEvent);
+adminTicketingRouter.post('/events/:id/approve', M.publishEvent);
 adminTicketingRouter.post('/events/:id/reject', EventValidationController.rejectEvent);
+adminTicketingRouter.get('/events', M.listEvents);
+adminTicketingRouter.post('/events', M.createEvent);
+adminTicketingRouter.get('/events/:id', M.eventDetail);
+adminTicketingRouter.put('/events/:id', M.updateEvent);
+adminTicketingRouter.delete('/events/:id', M.deleteEvent);
+adminTicketingRouter.post('/events/:id/publish', M.publishEvent);
+adminTicketingRouter.post('/events/:id/pause', M.pauseEvent);
+adminTicketingRouter.post('/events/:id/resume', M.resumeEvent);
+adminTicketingRouter.post('/events/:id/cancel', M.cancelEvent);
+adminTicketingRouter.post('/events/:id/ticket-types', M.addTicketType);
+adminTicketingRouter.get('/events/:id/tickets/export', M.exportEventTickets);
+adminTicketingRouter.get('/events/:id/tickets', M.eventTickets);
+adminTicketingRouter.get('/events/:id/controllers', M.eventControllers);
+adminTicketingRouter.post('/events/:id/controllers', M.inviteController);
+adminTicketingRouter.delete('/events/:id/controllers/:controllerId', M.revokeController);
+
+// Types de billet
+adminTicketingRouter.put('/ticket-types/:typeId', M.updateTicketType);
+adminTicketingRouter.delete('/ticket-types/:typeId', M.deleteTicketType);
+
+// Demandes d'annulation de billet (le client demande, l'admin décide)
+adminTicketingRouter.get('/cancellation-requests', M.cancellationRequests);
+adminTicketingRouter.post('/tickets/:id/cancellation/approve', M.approveCancellation);
+adminTicketingRouter.post('/tickets/:id/cancellation/reject', M.rejectCancellation);
 
 // Transactions
 adminTicketingRouter.get('/transactions/wallet', AdminTransactionsController.getWalletTransactions);
@@ -89,7 +144,9 @@ adminTicketingRouter.post('/promo-codes', AdminPromoController.createPromoCode);
 adminTicketingRouter.put('/promo-codes/:id', AdminPromoController.updatePromoCode);
 adminTicketingRouter.delete('/promo-codes/:id', AdminPromoController.deletePromoCode);
 
-// Settings
+// Settings — /settings/commission avant /settings/:key.
+adminTicketingRouter.get('/settings/commission', M.getCommission);
+adminTicketingRouter.put('/settings/commission', M.updateCommission);
 adminTicketingRouter.get('/settings/pricing', AdminSettingsController.getPricing);
 adminTicketingRouter.put('/settings/pricing', AdminSettingsController.updatePricing);
 adminTicketingRouter.get('/settings', AdminSettingsController.getSettings);
@@ -107,8 +164,11 @@ adminTicketingRouter.get('/logs/activity', AdminLogsController.getActivityLogs);
 adminTicketingRouter.get('/logs/login', AdminLogsController.getLoginLogs);
 adminTicketingRouter.get('/logs/audit/:entityType/:entityId', AdminLogsController.getAuditTrail);
 
+// Tableau de bord par organisateur (historique) — réservé aux admins : il
+// expose les acheteurs (nom, email) et n'avait aucun contrôle de
+// propriétaire. L'organisateur passe par /organizer-space (app mobile).
 export const organizerDashboardRouter = Router();
-organizerDashboardRouter.use(authMiddleware);
+organizerDashboardRouter.use(authMiddleware, adminRoleMiddleware);
 organizerDashboardRouter.get('/:id/stats', OrganizerDashboardController.getStats);
 organizerDashboardRouter.get('/:id/sales', OrganizerDashboardController.getSales);
 organizerDashboardRouter.get('/:id/validated-tickets', OrganizerDashboardController.getValidatedTickets);

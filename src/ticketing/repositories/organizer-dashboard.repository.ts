@@ -30,10 +30,10 @@ export class OrganizerDashboardRepository {
         // No `is_validated` column on event_ticket — a validated ticket is
         // status='used'.
         const [totalTicketsSold, validatedTickets, revenueAgg, confirmedRevenueAgg] = await Promise.all([
-            prismaDb.event_ticket.count({ where: ticketWhere }),
+            prismaDb.event_ticket.count({ where: { ...ticketWhere, payment_status: 'paid' } }),
             prismaDb.event_ticket.count({ where: { ...ticketWhere, status: 'used' } }),
-            prismaDb.event_ticket.aggregate({ where: ticketWhere, _sum: { total_price: true } }),
-            prismaDb.event_ticket.aggregate({ where: { ...ticketWhere, status: 'confirmed' }, _sum: { total_price: true } }),
+            prismaDb.event_ticket.aggregate({ where: { ...ticketWhere, payment_status: 'paid' }, _sum: { total_price: true } }),
+            prismaDb.event_ticket.aggregate({ where: { ...ticketWhere, payment_status: 'paid', status: { in: ['confirmed', 'used'] } }, _sum: { total_price: true } }),
         ]);
 
         // Premium services usage — no separate "field service" category
@@ -127,7 +127,7 @@ export class OrganizerDashboardRepository {
             ? await Promise.all([
                 prismaDb.event_ticket.groupBy({
                     by: ['event_id'],
-                    where: { event_id: { in: eventIds }, is_deleted: false },
+                    where: { event_id: { in: eventIds }, is_deleted: false, payment_status: 'paid' },
                     _count: { _all: true },
                     _sum: { total_price: true },
                 }),

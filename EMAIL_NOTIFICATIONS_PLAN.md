@@ -111,6 +111,8 @@ Fichiers clés : [src/controllers/vtc/ride.controller.ts](src/controllers/vtc/ri
 
 ## 5. Backlog — Module Ticketing (billetterie)
 
+> **Remplacé (2026-10-25)** par le §5.5 de [TICKETING_MODULE_PLAN_2026-10.md](../TICKETING_MODULE_PLAN_2026-10.md). La billetterie est désormais opérée par Adigo (les admins créent les événements, plus de soumission par l'organisateur) : T4, T5 et T6 ci-dessous ne s'appliquent plus. T1 est fait (`ticketPurchaseConfirmedEmail`, envoyé au paiement wallet et Orange Money, sans QR en pièce jointe). Le tableau ci-dessous est conservé pour l'historique.
+
 Fichiers clés : [src/controllers/ticketing/ticket.controller.ts](src/controllers/ticketing/ticket.controller.ts),
 [src/controllers/ticketing/event.controller.ts](src/controllers/ticketing/event.controller.ts),
 [src/ticketing/controllers/event-validation.controller.ts](src/ticketing/controllers/event-validation.controller.ts).

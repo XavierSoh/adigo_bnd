@@ -5,6 +5,7 @@ import { TripGenerationService } from "../services/tripGeneration.service";
 import { TripSchedulerService } from "../services/tripScheduler.service";
 import { migrateVtcRideIdempotency } from "./migrate_vtc_ride_idempotency";
 import vtcRideExpiryService from "../services/vtcRideExpiry.service";
+import { ticketingJobs } from "../ticketing/jobs/ticketing-jobs.service";
 import initChatData from "./initChatData";
 import {
   kInitialLogin,
@@ -50,6 +51,10 @@ const tripScheduler = new TripSchedulerService();
 tripScheduler.startScheduling();
 
 vtcRideExpiryService.startScheduling();
+
+// Billetterie : expiration des paiements OM abandonnés, clôture des
+// événements terminés, expiration des invitations contrôleur.
+ticketingJobs.startScheduling();
 
 const generationService = new TripGenerationService();
 

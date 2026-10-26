@@ -1,6 +1,8 @@
 // Migrated to Prisma's native model API — see BOOKING_MODULE_NOTES.md
 // ("Full Prisma relational-API migration", tier 3).
+import { Prisma } from "@prisma/client";
 import prismaDb from "../../config/prismaClient";
+import { decimalToNumber } from "../utils/ticketing-rules";
 
 export class AdminTransactionsRepository {
 
@@ -24,10 +26,28 @@ export class AdminTransactionsRepository {
         return { transactions: rows, total };
     }
 
-    static async getTicketTransactions(limit: number, offset: number, status?: string) {
-        const where = status ? { status } : {};
+    // Filtres envoyés par l'écran Transactions d'adigo2 (statut, statut de
+    // paiement, événement, recherche) — seul `status` était appliqué avant.
+    static async getTicketTransactions(limit: number, offset: number, filters: {
+        status?: string; payment_status?: string; payment_method?: string; event_id?: number; search?: string;
+    } = {}) {
+        const where: Prisma.event_ticketWhereInput = { is_deleted: false };
+        if (filters.status) where.status = filters.status;
+        if (filters.payment_status) where.payment_status = filters.payment_status;
+        if (filters.payment_method) where.payment_method = filters.payment_method;
+        if (filters.event_id) where.event_id = filters.event_id;
+        if (filters.search) {
+            where.OR = [
+                { reference: { contains: filters.search, mode: 'insensitive' } },
+                { event: { title: { contains: filters.search, mode: 'insensitive' } } },
+                { customer: { first_name: { contains: filters.search, mode: 'insensitive' } } },
+                { customer: { last_name: { contains: filters.search, mode: 'insensitive' } } },
+                { customer: { email: { contains: filters.search, mode: 'insensitive' } } },
+                { customer: { phone: { contains: filters.search } } },
+            ];
+        }
 
-        const [rows, total] = await Promise.all([
+        const [rawRows, total] = await Promise.all([
             prismaDb.event_ticket.findMany({
                 where,
                 include: {
@@ -41,6 +61,7 @@ export class AdminTransactionsRepository {
             prismaDb.event_ticket.count({ where }),
         ]);
 
+        const rows = rawRows.map((r) => ({ ...r, commission_rate: decimalToNumber(r.commission_rate) }));
         return { transactions: rows, total };
     }
 
@@ -88,19 +109,8 @@ export class AdminTransactionsRepository {
             },
         }).then((row) => {
             if (!row) return null;
-            const { event_ticket_type, ...rest } = row;
-            return { ...rest, ticket_type: event_ticket_type };
-        });
-    }
-
-    static async findTicketForRefund(id: number) {
-        return prismaDb.event_ticket.findFirst({ where: { id, is_deleted: false } });
-    }
-
-    static async markRefunded(id: number) {
-        await prismaDb.event_ticket.updateMany({
-            where: { id },
-            data: { payment_status: 'refunded', status: 'cancelled' },
+            const { event_ticket_type, commission_rate, ...rest } = row;
+            return { ...rest, commission_rate: decimalToNumber(commission_rate), ticket_type: event_ticket_type };
         });
     }
 }
